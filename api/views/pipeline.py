@@ -110,7 +110,7 @@ class FilterExecutionView(APIView):
             """)
             [row[0] for row in db_cursor.fetchall()]
 
-            db_cursor.execute('''
+            db_cursor.execute(f'''
                 SELECT id, {name_column}, {config_column}, created_on
                 FROM "GENERAL".source
                 WHERE id = %s
@@ -443,7 +443,7 @@ class JoinExecutionView(APIView):
             """)
             [row[0] for row in db_cursor.fetchall()]
 
-            db_cursor.execute('''
+            db_cursor.execute(f'''
                 SELECT {config_column}, created_on
                 FROM "GENERAL".source
                 WHERE id = %s
@@ -1381,260 +1381,212 @@ class PipelineQueryExecutionView(APIView):
                 edges = cleaned_edges  # use cleaned edges for rest of request
 
             # ============================================================
-            # PREVIEW MODE: Single-query compilation with adaptive caching
+            # PREVIEW MODE  (previewMode = "output" | "input")
             # ============================================================
-            # Enabled when preview_mode is "output" or "input"
+            # Single path for all node types.  Flow:
+            #   1. Check checkpoint cache → return rows directly if hit
+            #   2. Resolve source credentials (needed by SQLCompiler + executor)
+            #   3. Compile the pipeline DAG to a CTE-based SQL query
+            #   4. Execute the SQL against the source DB
+            #   5. For compute nodes: run the Python code on the SQL result
+            #   6. Save a new checkpoint for expensive node types
+            # ============================================================
             if preview_mode in ("output", "input"):
                 from api.services.checkpoint_cache import CheckpointCacheManager
+                from api.pipeline.preview_compiler import SQLCompiler
+                from api.utils.db_executor import execute_preview_query
+
                 canvas_id = request.data.get('canvasId')
-                has_canvas_id = canvas_id is not None and str(canvas_id).strip() != ""
-                # Allow preview before canvas is saved: use temp schema, skip cache lookup/save
-                if not has_canvas_id:
-                    canvas_id = "preview_unsaved"
-                    use_cache = False
-                else:
-                    use_cache = request.data.get('useCache', True)
+                has_canvas_id = bool(canvas_id and str(canvas_id).strip())
+                canvas_id = str(canvas_id) if has_canvas_id else "preview_unsaved"
+                use_cache = request.data.get('useCache', True) if has_canvas_id else False
                 force_refresh = request.data.get('forceRefresh', False)
-                checkpoint_mgr = CheckpointCacheManager(customer.cust_db, str(canvas_id))
 
-                # 1. Check for nearest valid physical checkpoint
-                ancestor_id, checkpoint = None, None
+                checkpoint_mgr = CheckpointCacheManager(customer.cust_db, canvas_id)
+
+                # ── 1. Checkpoint cache lookup ───────────────────────────────
                 if use_cache and not force_refresh:
-                    ancestor_id, checkpoint = checkpoint_mgr.find_nearest_checkpoint(target_node_id, nodes, edges)
+                    ancestor_id, checkpoint = checkpoint_mgr.find_nearest_checkpoint(
+                        target_node_id, nodes, edges
+                    )
                     if ancestor_id == target_node_id and checkpoint:
-                        logger.info(f"[CHECKPOINT HIT] Target node {target_node_id} has valid table cache")
-                        from api.utils.db_executor import execute_preview_query
-                        # Just select from the checkpoint table
+                        logger.info("[PREVIEW] Checkpoint HIT for %s", target_node_id)
                         sql = f'SELECT * FROM {checkpoint["table_ref"]} LIMIT %s'
-                        results = execute_preview_query(sql, [page_size], {}, page, page_size, skip_db_type=True)
-
-                        # execute_preview_query may return either a dict or a list; normalise to dict shape
-                        if isinstance(results, list):
-                            rows = results
-                        else:
-                            rows = results.get('rows', [])
-
-                        columns_meta = checkpoint.get('columns', []) if isinstance(checkpoint, dict) else []
-                        column_names = []
-                        for c in columns_meta:
-                            if isinstance(c, dict):
-                                name = c.get('name') or c.get('column') or c.get('column_name')
-                            else:
-                                name = str(c)
-                            if name:
-                                column_names.append(name)
-
+                        result = execute_preview_query(
+                            sql, [page_size], {}, page, page_size,
+                            customer_db=customer.cust_db,
+                        )
+                        rows = result if isinstance(result, list) else result.get("rows", [])
+                        col_names = [
+                            (c.get("name") or c.get("column") or str(c))
+                            for c in (checkpoint.get("columns") or [])
+                            if (c.get("name") or c.get("column") or isinstance(c, str))
+                        ]
                         return Response({
                             "rows": rows,
-                            "columns": column_names,
-                            "has_more": False,  # Checkpoint is capped at 100
+                            "columns": col_names,
+                            "has_more": False,
                             "total": len(rows),
                             "page": page,
                             "page_size": page_size,
                             "from_cache": True,
-                            "preview_mode": True
+                            "preview_mode": preview_mode,
                         })
+                else:
+                    ancestor_id, checkpoint = None, None
 
-                # 2. Determine DB Type and Source Config (needed for compilation and execution)
-                source_nodes = [n for n in nodes if n.get('data', {}).get('type') == 'source']
+                # ── 2. Resolve source credentials ────────────────────────────
+                # GENERAL.source lives on the DEFAULT Django DB, not on the customer DB.
+                # Use get_default_db_connection() — same as SQLCompiler._get_source_config.
+                source_nodes = [n for n in nodes if isinstance(n, dict) and
+                                n.get("data", {}).get("type") == "source"]
                 if not source_nodes:
-                    return Response({"error": "Pipeline must have at least one source"}, status=400)
+                    return Response({"error": "Pipeline must have at least one source node"},
+                                    status=status.HTTP_400_BAD_REQUEST)
 
-                from api.utils.helpers import decrypt_source_data
-                # Pick the first well-formed source node
                 first_source = next(
-                    (n for n in source_nodes if isinstance(n, dict) and isinstance(n.get('data'), dict)),
+                    (n for n in source_nodes if isinstance(n.get("data"), dict)),
                     source_nodes[0],
                 )
-                source_id = (
-                    first_source.get('data', {})
-                    .get('config', {})
-                    .get('sourceId')
-                    if isinstance(first_source, dict)
-                    else None
-                )
+                source_id = first_source.get("data", {}).get("config", {}).get("sourceId")
 
-                from django.conf import settings as django_settings
-                import psycopg2
-                conn = psycopg2.connect(
-                    host=django_settings.DATABASES['default']['HOST'],
-                    port=django_settings.DATABASES['default']['PORT'],
-                    user=django_settings.DATABASES['default']['USER'],
-                    password=django_settings.DATABASES['default']['PASSWORD'],
-                    database=customer.cust_db
-                )
-                db_type = 'postgresql'
-                source_config = {}
-                try:
-                    with conn.cursor() as cur:
-                        # Check which columns exist in GENERAL.source table
-                        cur.execute("""
-                            SELECT column_name
-                            FROM information_schema.columns
-                            WHERE table_schema = 'GENERAL' AND table_name = 'source'
-                        """)
-                        available_columns = [row[0] for row in cur.fetchall()]
-
-                        # Determine which column name exists
-                        config_column = 'source_config' if 'source_config' in available_columns else 'src_config'
-
-                        # Query with only the column that exists
-                        cur.execute(f'SELECT "{config_column}", created_on FROM "GENERAL".source WHERE id = %s', (source_id,))
-                        row = cur.fetchone()
-                        if row:
-                            sc_encrypted = row[0]
-                            from api.utils.helpers import decrypt_source_data
-                            source_config = decrypt_source_data(sc_encrypted, customer.cust_id, row[1])
-                            db_type = source_config.get('db_type', 'postgresql')
-                finally:
-                    conn.close()
-
-                from api.pipeline.preview_compiler import SQLCompiler
-                from api.utils.db_executor import execute_preview_query
-
-                # 3. Special handling for compute nodes (Python boundary)
-                if target_node_type == 'compute':
-                    logger.info(f"Executing compute node preview: {target_node_id}")
+                db_type = "postgresql"
+                source_config: dict = {}
+                if source_id:
+                    from api.utils.db_connection import get_default_db_connection
+                    _conn = get_default_db_connection()
+                    _conn.autocommit = True
                     try:
-                        compiler = SQLCompiler(
-                            nodes, edges, target_node_id, customer, db_type,
-                            start_node_id=ancestor_id,
-                            start_table_ref=checkpoint['table_re'] if checkpoint else None,
-                            initial_columns=checkpoint['columns'] if checkpoint else None
-                        )
-                        sql_query, sql_params, input_metadata = compiler.compile()
+                        with _conn.cursor() as _cur:
+                            _cur.execute("""
+                                SELECT column_name FROM information_schema.columns
+                                WHERE table_schema = 'GENERAL' AND table_name = 'source'
+                            """)
+                            _avail = [r[0] for r in _cur.fetchall()]
+                            _cfg_col = "source_config" if "source_config" in _avail else "src_config"
+                            _cur.execute(
+                                f'SELECT "{_cfg_col}", created_on FROM "GENERAL".source WHERE id = %s',
+                                (source_id,),
+                            )
+                            _row = _cur.fetchone()
+                            if _row:
+                                from api.utils.helpers import decrypt_source_data
+                                _dec = decrypt_source_data(_row[0], customer.cust_id, _row[1])
+                                if _dec:
+                                    source_config = _dec
+                                    db_type = source_config.get("db_type", "postgresql")
+                    finally:
+                        _conn.close()
 
-                        # Use 100 row limit for Python boundary
-                        compute_input_limit = 100
-                        if sql_params:
-                            sql_params[-1] = compute_input_limit
-                        else:
-                            sql_params.append(compute_input_limit)
-                            if 'LIMIT' not in sql_query.upper():
-                                sql_query += '\nLIMIT %s'
+                # ── 3. Compile the pipeline DAG to SQL ───────────────────────
+                try:
+                    compiler = SQLCompiler(
+                        nodes, edges, target_node_id, customer, db_type,
+                        start_node_id=ancestor_id,
+                        start_table_ref=checkpoint["table_ref"] if checkpoint else None,
+                        initial_columns=checkpoint["columns"] if checkpoint else None,
+                    )
+                    sql_query, sql_params, output_metadata = compiler.compile()
+                except Exception as compile_err:
+                    logger.error("[PREVIEW] Compile error: %s", compile_err, exc_info=True)
+                    return Response({"error": f"Pipeline compile failed: {compile_err!s}"},
+                                    status=status.HTTP_400_BAD_REQUEST)
 
-                        results = execute_preview_query(sql_query, sql_params, source_config, 1, compute_input_limit)
-                        input_rows = results.get('rows', [])
+                # ── 4. Execute SQL against source DB ─────────────────────────
+                if sql_params:
+                    sql_params[-1] = page_size   # enforce page_size as LIMIT
+                else:
+                    sql_params = [page_size]
+                    if "LIMIT" not in sql_query.upper():
+                        sql_query += "\nLIMIT %s"
 
-                        if preview_mode == "input":
-                            input_columns = input_metadata.get("columns", [])
-                            col_names = [c.get("name") for c in input_columns]
-                            return Response({
-                                "rows": input_rows[(page-1)*page_size:page*page_size],
-                                "columns": col_names,
-                                "has_more": len(input_rows) > page*page_size,
-                                "total": len(input_rows),
-                                "page": page,
-                                "page_size": page_size,
-                                "from_cache": False,
-                                "preview_mode": "input"
-                            })
+                try:
+                    exec_result = execute_preview_query(
+                        sql_query, sql_params, source_config, page, page_size
+                    )
+                except Exception as exec_err:
+                    logger.error("[PREVIEW] Execute error: %s", exec_err, exc_info=True)
+                    return Response({"error": f"Query execution failed: {exec_err!s}"},
+                                    status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-                        # Run Python Compute
+                rows = exec_result if isinstance(exec_result, list) else exec_result.get("rows", [])
+                out_cols = output_metadata.get("columns", [])
+
+                # ── 4b. input-preview: return data before compute runs ────────
+                if preview_mode == "input":
+                    return Response({
+                        "rows": rows[((page - 1) * page_size):(page * page_size)],
+                        "columns": [c.get("name") for c in out_cols],
+                        "has_more": len(rows) > page * page_size,
+                        "total": len(rows),
+                        "page": page,
+                        "page_size": page_size,
+                        "from_cache": False,
+                        "preview_mode": "input",
+                    })
+
+                # ── 5. Compute node: run Python code on the SQL result ────────
+                if target_node_type == "compute":
+                    try:
                         import numpy as np
                         import pandas as pd
-                        input_df = pd.DataFrame(input_rows)
-                        code = target_node_data.get('config', {}).get('code', '')
-                        # Provide both 'd' and '_input_df' for flexibility
+                        code = target_node_data.get("config", {}).get("code", "")
+                        if not code.strip():
+                            return Response({"error": "Compute node has no code configured"},
+                                            status=status.HTTP_400_BAD_REQUEST)
+                        input_df = pd.DataFrame(rows)
                         local_vars = {
-                            'd': input_df,
-                            '_input_d': input_df,  # Alias for backward compatibility
-                            'pd': pd,
-                            'np': np,
-                            '_output_df': None
+                            "d": input_df, "_input_d": input_df,
+                            "pd": pd, "np": np, "_output_d": None,
                         }
-                        exec(code, {}, local_vars)
-                        output_df = local_vars.get('_output_d') if local_vars.get('_output_d') is not None else local_vars.get('output_df')
-
+                        exec(code, {}, local_vars)  # noqa: S102
+                        output_df = local_vars.get("_output_d") or local_vars.get("output_df")
                         if not isinstance(output_df, pd.DataFrame):
-                            return Response({"error": "Compute node must return a DataFrame in _output_df"}, status=400)
-
-                        # MEMORY SAFETY: Enforce output row limit
-                        # User code can generate unlimited rows (e.g., explode, merge)
-                        # Truncate to prevent memory overflow
-                        MAX_COMPUTE_OUTPUT_ROWS = 100
-                        if len(output_df) > MAX_COMPUTE_OUTPUT_ROWS:
-                            logger.warning(
-                                f"[COMPUTE MEMORY GUARD] Output truncated from {len(output_df)} "
-                                f"to {MAX_COMPUTE_OUTPUT_ROWS} rows"
+                            return Response(
+                                {"error": "Compute node must assign a DataFrame to _output_d"},
+                                status=status.HTTP_400_BAD_REQUEST,
                             )
-                            output_df = output_df.head(MAX_COMPUTE_OUTPUT_ROWS)
-
+                        MAX_ROWS = 100
+                        if len(output_df) > MAX_ROWS:
+                            output_df = output_df.head(MAX_ROWS)
                         output_df = output_df.replace({np.nan: None, np.inf: None, -np.inf: None})
-                        output_data = output_df.to_dict('records')
-                        output_columns = [{'name': col, 'datatype': str(output_df[col].dtype)} for col in output_df.columns]
-
-                        # Save checkpoint only when canvas is saved (skip for unsaved preview)
+                        rows = output_df.to_dict("records")
+                        out_cols = [
+                            {"name": col, "datatype": str(output_df[col].dtype)}
+                            for col in output_df.columns
+                        ]
                         if has_canvas_id:
                             checkpoint_mgr.save_checkpoint(
-                                node_id=target_node_id, node_type='compute',
-                                node_config=target_node_data.get('config', {}),
-                                upstream_version_hash=None, columns=output_columns, rows=output_data
+                                node_id=target_node_id, node_type="compute",
+                                node_config=target_node_data.get("config", {}),
+                                upstream_version_hash=None, columns=out_cols, rows=rows,
                             )
+                    except Exception as compute_err:
+                        logger.error("[PREVIEW] Compute error: %s", compute_err, exc_info=True)
+                        return Response({"error": f"Compute execution failed: {compute_err!s}"},
+                                        status=status.HTTP_400_BAD_REQUEST)
 
-                        return Response({
-                            "rows": output_data[(page-1)*page_size:page*page_size],
-                            "columns": [c['name'] for c in output_columns],
-                            "has_more": len(output_data) > page*page_size,
-                            "total": len(output_data),
-                            "page": page,
-                            "page_size": page_size,
-                            "from_cache": False,
-                            "preview_mode": "output"
-                        })
-                    except Exception as e:
-                        logger.error(f"Compute node preview failed: {e}", exc_info=True)
-                        return Response({"error": f"Compute execution failed: {e!s}"}, status=500)
+                # ── 6. Save checkpoint for expensive nodes ───────────────────
+                elif has_canvas_id and checkpoint_mgr.is_checkpoint_node(target_node_type):
+                    ok = checkpoint_mgr.save_checkpoint(
+                        target_node_id, target_node_type,
+                        target_node_data.get("config", {}),
+                        None, out_cols,
+                        rows=rows, sql_query=sql_query, sql_params=sql_params,
+                    )
+                    logger.info("[PREVIEW] Checkpoint %s for %s",
+                                "saved" if ok else "FAILED", target_node_id)
 
-                # 4. Regular SQL-compilable nodes
-                else:
-                    try:
-                        compiler = SQLCompiler(
-                            nodes, edges, target_node_id, customer, db_type,
-                            start_node_id=ancestor_id,
-                            start_table_ref=checkpoint['table_re'] if checkpoint else None,
-                            initial_columns=checkpoint['columns'] if checkpoint else None
-                        )
-                        sql_query, sql_params, output_metadata = compiler.compile()
-
-                        if sql_params:
-                            sql_params[-1] = page_size
-                        else:
-                            sql_params.append(page_size)
-                            if 'LIMIT' not in sql_query.upper():
-                                sql_query += '\nLIMIT %s'
-
-                        results = execute_preview_query(sql_query, sql_params, source_config, page, page_size)
-                        rows = results.get('rows', [])
-                        out_cols = output_metadata.get('columns', [])
-
-                        if has_canvas_id and checkpoint_mgr.is_checkpoint_node(target_node_type):
-                            # We always pass 'rows' because we've already fetched them for the preview.
-                            # The CheckpointMgr prioritizes 'rows' over 'sql_query', which is safer
-                            # for nodes that might still reference the source database.
-                            logger.info(f"[CHECKPOINT] Saving {target_node_type} node checkpoint")
-                            success = checkpoint_mgr.save_checkpoint(
-                                target_node_id, target_node_type, target_node_data.get('config', {}),
-                                None, out_cols, rows=rows, sql_query=sql_query, sql_params=sql_params
-                            )
-                            if success:
-                                logger.info(f"✅ [CHECKPOINT] Cache saved successfully for {target_node_id}")
-                            else:
-                                logger.error(f"❌ [CHECKPOINT] Cache save FAILED for {target_node_id}")
-
-                        return Response({
-                            "rows": rows,
-                            "columns": [col.get('name') for col in out_cols],
-                            "has_more": len(rows) > page*page_size,
-                            "total": len(rows),
-                            "page": page,
-                            "page_size": page_size,
-                            "from_cache": False,
-                            "preview_mode": "output"
-                        })
-                    except Exception as e:
-                        logger.error(f"SQL preview failed: {e}", exc_info=True)
-                        return Response({"error": f"Preview failed: {e!s}"}, status=500)
+                return Response({
+                    "rows": rows[((page - 1) * page_size):(page * page_size)],
+                    "columns": [c.get("name") for c in out_cols],
+                    "has_more": len(rows) > page * page_size,
+                    "total": len(rows),
+                    "page": page,
+                    "page_size": page_size,
+                    "from_cache": False,
+                    "preview_mode": "output",
+                })
 
             # ============================================================
             # PRODUCTION MODE: Existing execution logic
@@ -2165,7 +2117,7 @@ class PipelineQueryExecutionView(APIView):
                 columns = [row[0] for row in db_cursor.fetchall()]
                 config_column = 'source_config' if 'source_config' in columns else 'src_config'
 
-                db_cursor.execute('''
+                db_cursor.execute(f'''
                     SELECT {config_column}, created_on
                     FROM "GENERAL".source
                     WHERE id = %s
@@ -2593,8 +2545,8 @@ class PipelineQueryExecutionView(APIView):
                 columns = [row[0] for row in db_cursor.fetchall()]
                 config_column = 'source_config' if 'source_config' in columns else 'src_config'
 
-                db_cursor.execute('''
-                    SELECT {name_column}, {config_column}, created_on
+                db_cursor.execute(f'''
+                    SELECT {config_column}, created_on
                     FROM "GENERAL".source
                     WHERE id = %s
                 ''', (source_id,))
@@ -2608,9 +2560,9 @@ class PipelineQueryExecutionView(APIView):
                         status=status.HTTP_404_NOT_FOUND
                     )
 
-                source_name = source_row[0]
-                source_config_encrypted = source_row[1]
-                source_created_on = source_row[2]
+                source_config_encrypted = source_row[0]
+                source_created_on = source_row[1]
+                source_name = f"source_{source_id}"
 
                 # Decrypt source configuration
                 decrypted_config = decrypt_source_data(source_config_encrypted, customer.cust_id, source_created_on)
@@ -3465,8 +3417,8 @@ class PipelineQueryExecutionView(APIView):
                             columns = [row[0] for row in db_cursor.fetchall()]
                             config_column = 'source_config' if 'source_config' in columns else 'src_config'
 
-                            db_cursor.execute('''
-                                SELECT {name_column}, {config_column}, created_on
+                            db_cursor.execute(f'''
+                                SELECT {config_column}, created_on
                                 FROM "GENERAL".source
                                 WHERE id = %s
                             ''', (source_id_for_join,))
@@ -3480,9 +3432,9 @@ class PipelineQueryExecutionView(APIView):
                                     status=status.HTTP_404_NOT_FOUND
                                 )
 
-                            source_name = source_row[0]
-                            source_config_encrypted = source_row[1]
-                            source_created_on = source_row[2]
+                            source_config_encrypted = source_row[0]
+                            source_created_on = source_row[1]
+                            source_name = f"source_{source_id_for_join}"
                             source_config = decrypt_source_data(source_config_encrypted, customer.cust_id, source_created_on)
                             db_cursor.close()
                             conn.close()
@@ -3720,7 +3672,7 @@ class PipelineQueryExecutionView(APIView):
                 # the source_config. That value is stored in the source table's created_on
                 # column, not the customer's created_on. Using the wrong timestamp will
                 # cause authentication tag mismatch errors during decryption.
-                db_cursor.execute('''
+                db_cursor.execute(f'''
                     SELECT {name_column}, {config_column}, created_on
                     FROM "GENERAL".source
                     WHERE id = %s

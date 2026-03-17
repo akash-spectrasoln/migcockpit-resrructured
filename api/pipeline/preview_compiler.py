@@ -1238,13 +1238,53 @@ class SQLCompiler:
             # Include mode: select only selected columns
             if selected_columns:
                 # Resolve each entry (may be technical_name or name) to actual column name for SQL
+                # Frontend may send columns in several formats:
+                #   1. plain name:               "connection_id"
+                #   2. 8-char prefix + _:        "dcbb0c03_connection_id"  (technical_name)
+                #   3. full UUID + __:           "dcbb0c03-c41f-42ca-b810-644b5bc44db6__connection_id"
+                # We need to normalise all three to the actual 'name' stored in input_metadata.
+                import re as _re
+                _uuid_prefix_re = _re.compile(
+                    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}__', _re.I
+                )
+
+                def _strip_uuid_prefix(col: str) -> str:
+                    """Remove full-UUID__ prefix that the frontend persists in selectedColumns."""
+                    return _uuid_prefix_re.sub('', col)
+
                 input_cols = input_metadata.get('columns', [])
                 resolved_selected = []
                 for col in selected_columns:
-                    # Match by technical_name or name (rename-safe: frontend can persist technical_name)
-                    meta = next((c for c in input_cols if (c.get('technical_name') or c.get('name')) == col or c.get('name') == col), None)
-                    resolved = (meta.get('name') if meta else None) or col
-                    resolved_selected.append(resolved)
+                    # Try direct match first (technical_name or name)
+                    meta = next(
+                        (c for c in input_cols
+                         if (c.get('technical_name') or c.get('name')) == col
+                         or c.get('name') == col),
+                        None,
+                    )
+                    if meta:
+                        resolved_selected.append(meta.get('name') or col)
+                        continue
+                    # Strip full-UUID__ prefix and retry
+                    stripped = _strip_uuid_prefix(col)
+                    if stripped != col:
+                        meta2 = next(
+                            (c for c in input_cols
+                             if (c.get('technical_name') or c.get('name')) == stripped
+                             or c.get('name') == stripped),
+                            None,
+                        )
+                        if meta2:
+                            resolved_selected.append(meta2.get('name') or stripped)
+                            continue
+                        # Also try matching by base name after stripping 8-char prefix
+                        base = stripped.split('_', 1)[-1] if '_' in stripped else stripped
+                        meta3 = next((c for c in input_cols if c.get('name') == base), None)
+                        if meta3:
+                            resolved_selected.append(meta3.get('name') or base)
+                            continue
+                    # Last resort: use stripped name as-is (may fail validation below — that's fine)
+                    resolved_selected.append(stripped if stripped != col else col)
                 # Map selected columns to actual available columns
                 # This handles cases where projection was configured before join conflict resolution
                 mapped_columns = []
@@ -1994,49 +2034,119 @@ class SQLCompiler:
             raise last_err
 
     def _get_table_metadata(self, source_id: int, table_name: str, schema: str, prefix: Optional[str] = None) -> dict:
-        """Get table metadata (column names and types).
-        prefix: optional; when set, technical_name = prefix_colname for uniqueness across sources.
-        db_name: actual DB column name (used for fetch and filter pushdown).
+        """Get table metadata (column names and types) for any supported DB type.
+
+        Uses the FastAPI extraction service's /metadata/columns endpoint so that
+        PostgreSQL, SQL Server, MySQL, and Oracle all work identically.
+        Falls back to a direct psycopg2 query only when the extraction service is
+        unavailable and the source is PostgreSQL.
+
+        prefix: when set, technical_name = prefix_colname (keeps columns from
+        different source nodes unique across a joined pipeline).
+        db_name: the raw column name in the source DB (used for pushdown rewriting).
         """
         source_config = self.source_configs.get(source_id)
         if not source_config:
             source_config = self._get_source_config(source_id)
+            self.source_configs[source_id] = source_config
 
-        # Connect to source database
         db_type = source_config.get('db_type', 'postgresql').lower()
 
-        if db_type == 'postgresql':
-            conn = self._connect_to_source_postgres(source_config)
-            cursor = conn.cursor()
+        # ── Try the extraction service first (works for ALL DB types) ──────────
+        try:
+            from django.conf import settings as django_settings
+            import urllib.request, json as _json
 
-            try:
-                # Get column metadata
-                cursor.execute("""
-                    SELECT column_name, data_type, is_nullable
-                    FROM information_schema.columns
-                    WHERE table_schema = %s AND table_name = %s
-                    ORDER BY ordinal_position
-                """, (schema or 'public', table_name))
+            svc_url = getattr(django_settings, 'FASTAPI_EXTRACTION_SERVICE_URL', 'http://localhost:8001')
+            payload = _json.dumps({
+                'db_type': db_type,
+                'connection_config': {
+                    'hostname': source_config.get('hostname') or source_config.get('host'),
+                    'port': source_config.get('port'),
+                    'database': source_config.get('database') or source_config.get('dbname'),
+                    'user': source_config.get('user') or source_config.get('username'),
+                    'password': source_config.get('password'),
+                    'schema': source_config.get('schema'),
+                    'service_name': source_config.get('service_name'),
+                },
+                'table_name': table_name,
+                'schema': schema or source_config.get('schema', 'public'),
+            }).encode()
 
-                columns = []
-                for row in cursor.fetchall():
-                    col_name, data_type, is_nullable = row
-                    tech = f"{prefix}_{col_name}" if (prefix and prefix.strip()) else col_name
-                    columns.append({
-                        'name': col_name,
-                        'technical_name': tech,
-                        'db_name': col_name,
-                        'datatype': data_type.upper(),
-                        'source': 'base',
-                        'nullable': is_nullable == 'YES'
-                    })
+            req = urllib.request.Request(
+                f'{svc_url}/metadata/columns',
+                data=payload,
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = _json.loads(resp.read())
 
+            raw_cols = data.get('columns', [])
+            columns = []
+            for col in raw_cols:
+                col_name = col.get('name') or col.get('COLUMN_NAME') or col.get('column_name') or ''
+                if not col_name:
+                    continue
+                data_type = (
+                    col.get('datatype') or col.get('data_type') or
+                    col.get('DATA_TYPE') or 'TEXT'
+                ).upper()
+                nullable = col.get('nullable', True)
+                if isinstance(nullable, str):
+                    nullable = nullable.upper() != 'NO'
+
+                tech = f'{prefix}_{col_name}' if (prefix and prefix.strip()) else col_name
+                columns.append({
+                    'name': col_name,
+                    'technical_name': tech,
+                    'db_name': col_name,
+                    'datatype': data_type,
+                    'source': 'base',
+                    'nullable': nullable,
+                })
+
+            if columns:
                 return {'columns': columns}
+            # If empty, fall through to direct connection attempt below
 
-            finally:
-                cursor.close()
-                conn.close()
-        else:
-            # For other DB types, return basic metadata
-            # Full implementation would query appropriate system tables
+        except Exception as svc_err:
+            logger.warning(
+                '_get_table_metadata: extraction service unavailable (%s), '
+                'falling back to direct connection (PostgreSQL only).', svc_err
+            )
+
+        # ── Direct psycopg2 fallback (PostgreSQL only) ─────────────────────────
+        if db_type != 'postgresql':
+            logger.error(
+                '_get_table_metadata: extraction service failed and db_type=%s '
+                'has no direct-connection fallback. Preview will show no columns.', db_type
+            )
             return {'columns': []}
+
+        conn = self._connect_to_source_postgres(source_config)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position
+            """, (schema or 'public', table_name))
+
+            columns = []
+            for col_name, data_type, is_nullable in cursor.fetchall():
+                tech = f'{prefix}_{col_name}' if (prefix and prefix.strip()) else col_name
+                columns.append({
+                    'name': col_name,
+                    'technical_name': tech,
+                    'db_name': col_name,
+                    'datatype': data_type.upper(),
+                    'source': 'base',
+                    'nullable': is_nullable == 'YES',
+                })
+
+            return {'columns': columns}
+        finally:
+            cursor.close()
+            conn.close()

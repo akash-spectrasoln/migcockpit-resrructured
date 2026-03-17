@@ -51,7 +51,7 @@ class CheckpointCacheManager:
             cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema_name}"')
 
             # Metadata table to track hashes and TTLs
-            cursor.execute('''
+            cursor.execute(f'''
                 CREATE TABLE IF NOT EXISTS "{self.schema_name}"."_checkpoint_metadata" (
                     node_id VARCHAR(255) PRIMARY KEY,
                     node_version_hash VARCHAR(64) NOT NULL,
@@ -84,7 +84,7 @@ class CheckpointCacheManager:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT node_version_hash, upstream_version_hash, column_metadata
                 FROM "{self.schema_name}"."_checkpoint_metadata"
                 WHERE node_id = %s AND expires_at > CURRENT_TIMESTAMP
@@ -104,7 +104,7 @@ class CheckpointCacheManager:
                     ''', (self.schema_name, table_name))
                     if cursor.fetchone()[0]:
                         return {
-                            'table_re': f'"{self.schema_name}"."{table_name}"',
+                            'table_ref': f'"{self.schema_name}"."{table_name}"',
                             'columns': col_meta if isinstance(col_meta, list) else json.loads(col_meta)
                         }
             return None
@@ -179,7 +179,7 @@ class CheckpointCacheManager:
                 logger.info("[CHECKPOINT SAVE] Successfully created cache table via SQL")
 
             # Update metadata
-            cursor.execute('''
+            cursor.execute(f'''
                 INSERT INTO "{self.schema_name}"."_checkpoint_metadata"
                 (node_id, node_version_hash, upstream_version_hash, expires_at, column_metadata)
                 VALUES (%s, %s, %s, %s, %s)

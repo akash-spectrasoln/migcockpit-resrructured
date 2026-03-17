@@ -4,7 +4,7 @@ Database executor for executing compiled SQL queries.
 Handles connection management, query execution, and result formatting.
 """
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from django.conf import settings
 import psycopg2
@@ -19,23 +19,36 @@ def execute_preview_query(
     params: list[Any],
     source_config: dict[str, Any],
     page: int = 1,
-    page_size: int = 50
+    page_size: int = 50,
+    customer_db: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Execute a compiled SQL query against source database.
+    Execute a compiled SQL query.
 
-    Args:
-        sql_query: Compiled SQL query
-        params: SQL parameters
-        source_config: Source database configuration
-        page: Page number (1-indexed)
-        page_size: Number of rows per page
+    When ``customer_db`` is supplied the query runs against the customer's
+    PostgreSQL database (same server as the Django default DB, different
+    database name).  This is used for checkpoint-cache queries where the
+    table lives in a ``staging_preview_<canvas_id>`` schema on the customer DB,
+    NOT on the source DB.
 
-    Returns:
-        Dictionary with 'rows', 'columns', 'total', 'has_more'
+    When ``customer_db`` is None the query runs against the source database
+    described by ``source_config``.
     """
-    db_type = source_config.get('db_type', 'postgresql').lower()
+    if customer_db:
+        # Build a source_config that points at the customer DB on the same
+        # host/credentials as settings.DATABASES['default'].
+        default_db = settings.DATABASES.get('default', {})
+        effective_config = {
+            'db_type': 'postgresql',
+            'hostname': default_db.get('HOST', 'localhost'),
+            'port':     default_db.get('PORT', 5432),
+            'user':     default_db.get('USER', 'postgres'),
+            'password': default_db.get('PASSWORD', ''),
+            'database': customer_db,
+        }
+        return _execute_postgresql_query(sql_query, params, effective_config, page, page_size)
 
+    db_type = source_config.get('db_type', 'postgresql').lower()
     if db_type == 'postgresql':
         return _execute_postgresql_query(sql_query, params, source_config, page, page_size)
     elif db_type in ('sqlserver', 'mssql'):

@@ -232,8 +232,9 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# FastAPI Extraction Service URL
+# FastAPI Extraction Service URL — both names are accepted for backward compat
 FASTAPI_EXTRACTION_SERVICE_URL = os.getenv('FASTAPI_EXTRACTION_SERVICE_URL', 'http://localhost:8001')
+EXTRACTION_SERVICE_URL = FASTAPI_EXTRACTION_SERVICE_URL  # alias used by projection/aggregate/compute paths
 
 # Logging Configuration
 LOGGING = {
