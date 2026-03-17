@@ -1,0 +1,258 @@
+{% extends "base/navbar.html" %}
+
+{% block title %}Table Navigation - Data Migration API{% endblock %}
+
+{% block extra_styles %}
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+    body {
+        background: linear-gradient(135deg, #f5f7fa 0%, #e3e9f0 100%);
+    }
+    
+    .container {
+        max-width: 1000px;
+        padding: 3rem 2rem;
+    }
+    
+    .navigation-container {
+        width: 100%;
+    }
+    
+    .header-section {
+        text-align: center;
+        margin-bottom: 3rem;
+    }
+    
+    .header-section h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        color: #2d3748;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .header-section p {
+        font-size: 1.1rem;
+        color: #718096;
+    }
+    
+    .navigation-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 2rem;
+        margin-bottom: 2rem;
+    }
+    
+    .nav-card {
+        background: white;
+        border-radius: 15px;
+        padding: 2.5rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        transition: all 0.3s ease;
+        cursor: pointer;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        border: 2px solid transparent;
+    }
+    
+    .nav-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+        border-color: #667eea;
+    }
+    
+    .nav-card-icon {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1.5rem;
+        font-size: 2.5rem;
+        transition: all 0.3s ease;
+    }
+    
+    .nav-card:hover .nav-card-icon {
+        transform: scale(1.1) rotate(5deg);
+    }
+    
+    .nav-card.primary .nav-card-icon {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .nav-card.success .nav-card-icon {
+        background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+        color: white;
+    }
+    
+    .nav-card-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 0.75rem;
+        text-align: center;
+        color: #2d3748;
+    }
+    
+    .nav-card-description {
+        font-size: 0.95rem;
+        color: #718096;
+        text-align: center;
+        line-height: 1.6;
+        margin-bottom: 1.5rem;
+    }
+    
+    .nav-card-features {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    
+    .nav-card-features li {
+        padding: 0.5rem 0;
+        color: #4a5568;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+    }
+    
+    .nav-card-features li i {
+        margin-right: 0.75rem;
+        color: #48bb78;
+        font-size: 0.8rem;
+    }
+    
+    @media (max-width: 768px) {
+        .navigation-cards {
+            grid-template-columns: 1fr;
+        }
+        
+        .header-section h1 {
+            font-size: 2rem;
+        }
+        
+        .container {
+            padding: 2rem 1rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block nav_links %}
+<li><a href="{% url 'customer_user_dashboard' %}" id="dashboard-link">Dashboard</a></li>
+<li><a href="{% url 'projects_list' %}" id="projects-link">Projects</a></li>
+
+{% endblock %}
+
+{% block content %}
+<div class="navigation-container">
+    <div class="header-section">
+        <h1>
+            <i class="fas fa-database"></i> Table Management Hub
+        </h1>
+        <p id="subtitle-text">Choose your action to manage and view tables</p>
+        <div id="project-info" style="margin-top: 1rem; padding: 0.75rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: none;">
+            <strong style="color: #667eea;">Project ID:</strong> 
+            <span id="project-id-display" style="color: #2d3748; font-weight: 600;"></span>
+        </div>
+    </div>
+    
+    <div class="navigation-cards">
+        <!-- User Added Tables Card -->
+        <a href="/api/user-tables/${projectId}/" class="nav-card primary" id="user-tables-link">
+            <div class="nav-card-icon">
+                <i class="fas fa-table"></i>
+            </div>
+            <h3 class="nav-card-title">User Added Tables</h3>
+            <p class="nav-card-description">
+                View and manage all tables created by users in the database
+            </p>
+            <ul class="nav-card-features">
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    View all user-created tables
+                </li>
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    Edit table structure
+                </li>
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    View table data
+                </li>
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    Delete tables
+                </li>
+            </ul>
+        </a>
+        
+        <!-- Table Management Card -->
+        <a href="{% url 'table_management' %}" class="nav-card success" id="table-management-link">
+            <div class="nav-card-icon">
+                <i class="fas fa-upload"></i>
+            </div>
+            <h3 class="nav-card-title">Table Management</h3>
+            <p class="nav-card-description">
+                Upload data and add records to existing tables
+            </p>
+            <ul class="nav-card-features">
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    Upload Excel/CSV files
+                </li>
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    Add records manually
+                </li>
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    Preview data before upload
+                </li>
+                <li>
+                    <i class="fas fa-check-circle"></i>
+                    Automatic schema detection
+                </li>
+            </ul>
+        </a>
+    </div>
+</div>
+
+<script>
+     // Extract project_id from Django context
+    document.addEventListener('DOMContentLoaded', function() {
+        const projectId = '{{ project_id }}';
+        
+        if (projectId) {
+            // Display project ID
+            const projectInfoDiv = document.getElementById('project-info');
+            const projectIdDisplay = document.getElementById('project-id-display');
+            
+            projectIdDisplay.textContent = projectId;
+            projectInfoDiv.style.display = 'block';
+            
+            // Update subtitle
+            const subtitleText = document.getElementById('subtitle-text');
+            subtitleText.textContent = `Managing tables for Project #${projectId}`;
+            
+            // Update navigation links to include project_id
+            const userTablesLink = document.getElementById('user-tables-link');
+            const tableManagementLink = document.getElementById('table-management-link');
+            
+            userTablesLink.href = `/api/user-tables/${projectId}/`;
+            tableManagementLink.href = `{% url 'table_management' %}?project_id=${projectId}`;
+            
+            // Store project_id in sessionStorage for persistence across pages
+            sessionStorage.setItem('current_project_id', projectId);
+        }
+    });
+</script>
+{% endblock %}
+

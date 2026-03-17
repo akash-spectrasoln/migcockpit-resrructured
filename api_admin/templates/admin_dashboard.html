@@ -1,0 +1,127 @@
+{% extends 'base/admin_nav.html' %}
+
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .dashboard-header {
+        margin-bottom: 2rem;
+    }
+
+    .dashboard-header h1 {
+        font-size: 2rem;
+        color: #2d3748;
+        margin-bottom: 0.5rem;
+    }
+
+    .dashboard-header p {
+        color: #718096;
+        font-size: 1rem;
+    }
+
+    .action-cards {
+        display: flex;
+        gap: 1rem;
+        margin-top: 2rem;
+    }
+
+    .action-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 8px;
+        padding: 1rem 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+        border: none;
+        text-decoration: none;
+        display: inline-block;
+    }
+
+    .action-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+
+    .action-card.user-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .action-card.customer-card {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+
+    .action-icon {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 0.5rem;
+        background-color: rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        color: white;
+    }
+
+    .action-card h3 {
+        color: white;
+        font-size: 1rem;
+        margin-bottom: 0.25rem;
+        font-weight: 600;
+    }
+
+    .action-card p {
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 0.8rem;
+        margin: 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content-wrapper">
+    <div class="dashboard-header">
+        <h1>Welcome to Admin Dashboard</h1>
+        <p>Manage your users and customers efficiently</p>
+    </div>
+
+    <div class="action-cards">
+        <a href="/api-admin/userslist/" class="action-card user-card" style="text-decoration: none;">
+            <div class="action-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 24px; height: 24px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+            </div>
+            <h3>Users</h3>
+        </a>
+
+        <a href="{% url 'customer-list' %}" class="action-card customer-card" style="text-decoration: none;">
+            <div class="action-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 24px; height: 24px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+            </div>
+            <h3>Customers</h3>
+        </a>
+    </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    sessioncheck();
+    function sessioncheck() {
+        fetch('/api-admin/session-check/', {
+            method: 'GET',
+        })
+        .then(response => {
+            if (!response.ok) {
+                window.location.href = '{% url "admin-login" %}';
+            } else {
+                console.log('Session is valid');
+            }
+        });
+    }
+</script>
+{% endblock %}
+

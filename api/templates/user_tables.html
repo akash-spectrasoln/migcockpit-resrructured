@@ -1,0 +1,1271 @@
+{% extends "base/navbar.html" %}
+
+{% block title %}User Added Tables - Data Migration API{% endblock %}
+
+{% block extra_styles %}
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+        .tables-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .user-input-section {
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .table-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            transition: all 0.3s ease;
+            background-color: white;
+        }
+        .table-card:hover {
+            border-color: #007bff;
+            box-shadow: 0 4px 8px rgba(0,123,255,0.1);
+            transform: translateY(-2px);
+        }
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .table-name {
+            font-weight: bold;
+            color: #007bff;
+            font-size: 1.1em;
+        }
+        .table-stats {
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+        .table-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        .table-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .info-item {
+            background-color: #f8f9fa;
+            padding: 0.75rem;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .info-label {
+            font-weight: 600;
+            color: #495057;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .info-value {
+            color: #212529;
+            font-size: 0.95em;
+            margin-top: 0.25rem;
+        }
+        .loading {
+            display: none;
+        }
+        .editable-cell {
+            cursor: pointer;
+            padding: 0.3rem 0.5rem;
+            border-radius: 3px;
+            transition: background-color 0.2s;
+        }
+        .editable-cell:hover {
+            background-color: #f0f0f0;
+        }
+        .editable-cell.editing {
+            background-color: #fff;
+            cursor: text;
+        }
+        .column-name-display {
+            min-width: 100px;
+            display: inline-block;
+        }
+        .no-tables {
+            text-align: center;
+            padding: 3rem;
+            color: #6c757d;
+        }
+        .no-tables i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: #dee2e6;
+        }
+        .search-box {
+            margin-bottom: 1rem;
+        }
+        .table-count {
+            background-color: #e3f2fd;
+            color: #1976d2;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+</style>
+{% endblock %}
+
+{% block nav_links %}
+<li><a href="{% url 'customer_user_dashboard' %}">Dashboard</a></li>
+<li><a href="{% url 'projects_list' %}">Projects</a></li>
+<li><a href="/api/{{ project_id }}/table-navigation/">Table Navigation</a></li>
+{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="tables-container">
+    <h2 class="text-center mb-4">User Added Tables</h2>
+    <p class="text-center text-muted mb-4" id="tables-description">
+        View and manage all tables for project <strong>{{ project_id }}</strong>
+    </p>
+
+            <!-- Loading Indicator -->
+            <div class="loading text-center mt-3">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2" id="loadingText">Loading tables...</p>
+            </div>
+
+            <!-- Tables Display Section -->
+            <div id="tablesDisplaySection" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4>User Tables</h4>
+                    <div class="d-flex align-items-center" style="gap: 0.75rem;">
+                        <div class="table-count" id="tableCount">0 tables found</div>
+                        <div class="input-group input-group-sm" style="width: auto;">
+                            <label class="input-group-text" for="addTableSelect" style="font-size: 0.8rem;">Add Table</label>
+                            <select class="form-select" id="addTableSelect" style="font-size: 0.8rem;">
+                                <option value="" selected>Choose...</option>
+                                <option value="file">File</option>
+                                <option value="manually">Manually</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="search-box">
+                    <input type="text" class="form-control" id="searchTables" placeholder="Search tables...">
+                </div>
+                
+                <div id="tablesList">
+                    <!-- Tables will be populated here -->
+                </div>
+            </div>
+
+            <!-- No Tables Message -->
+            <div id="noTablesMessage" class="no-tables" style="display: none;">
+                <i class="fas fa-database"></i>
+                <h5>No Tables Found</h5>
+                <p>No tables were found for this user.</p>
+            </div>
+
+            <div id="alertContainer"></div>
+        </div>
+    </div>
+
+    <!-- Table Data Modal -->
+    <div class="modal fade" id="tableDataModal" tabindex="-1" aria-labelledby="tableDataModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="tableDataModalLabel">Table Data</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="tableDataInfo" class="mb-3">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Table:</strong> <span id="modalTableName"></span>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Records:</strong> <span id="modalRecordCount"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-striped table-hover" id="tableDataTable">
+                            <thead class="table-dark sticky-top">
+                                <tr id="tableDataHeaders">
+                                    <!-- Headers will be populated dynamically -->
+                                </tr>
+                            </thead>
+                            <tbody id="tableDataBody">
+                                <!-- Data will be populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div id="tableDataLoading" class="text-center" style="display: none;">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading table data...</p>
+                    </div>
+                    
+                    <div id="tableDataError" class="alert alert-danger" style="display: none;">
+                        <!-- Error message will be populated dynamically -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Table Structure Modal -->
+    <div class="modal fade" id="editStructureModal" tabindex="-1" aria-labelledby="editStructureModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="modal-title" id="editStructureModalLabel">Edit Table Structure</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body py-2">
+                    <div id="editStructureInfo" class="mb-2">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <small><strong>Table:</strong> <span id="editModalTableName"></span></small>
+                            </div>
+                            <div class="col-md-6">
+                                <small><strong>Records:</strong> <span id="editModalRecordCount"></span></small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Add New Column Section -->
+                    <div class="card mb-1">
+                        <div class="card-header py-1 d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0" style="font-size: 0.75rem;">Add New Column</h6>
+                            <button type="button" class="btn btn-sm btn-success" id="addColumnBtn" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">
+                                <i class="fas fa-plus"></i> Add Column
+                            </button>
+                        </div>
+                        <div class="card-body py-1">
+                            <div id="newColumnsContainer">
+                                <!-- New column inputs will be added here -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Existing Columns Section -->
+                    <div class="card">
+                        <div class="card-header py-1">
+                            <h6 class="mb-0" style="font-size: 0.75rem;">Existing Columns</h6>
+                        </div>
+                        <div class="card-body py-1">
+                            <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                                <table class="table table-striped table-sm table-bordered" id="editStructureTable">
+                                    <thead class="table-dark sticky-top">
+                                        <tr id="editStructureHeaders">
+                                            <!-- Headers will be populated dynamically -->
+                                        </tr>
+                                    </thead>
+                                    <tbody id="editStructureBody">
+                                        <!-- Data will be populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="editStructureLoading" class="text-center" style="display: none;">
+                        <div class="spinner-border text-primary" role="status" style="width: 1.5rem; height: 1.5rem;">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-1 mb-0" style="font-size: 0.85rem;">Loading table structure...</p>
+                    </div>
+                    
+                    <div id="editStructureError" class="alert alert-danger" style="display: none; font-size: 0.85rem; padding: 0.5rem;">
+                        <!-- Error message will be populated dynamically -->
+                    </div>
+                </div>
+                <div class="modal-footer py-1">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" style="font-size: 0.7rem; padding: 0.2rem 0.5rem;">Cancel</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="saveStructureBtn" style="font-size: 0.7rem; padding: 0.2rem 0.5rem;">
+                        <i class="fas fa-save"></i> Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Table Confirmation Modal -->
+    <div class="modal fade" id="deleteTableModal" tabindex="-1" aria-labelledby="deleteTableModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteTableModalLabel">Confirm Table Deletion</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete this table?</p>
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <strong>Warning:</strong> This action cannot be undone. All data in this table will be permanently lost.
+                    </div>
+                    <div id="deleteTableInfo">
+                        <strong>Table:</strong> <span id="deleteModalTableName"></span><br>
+                        <strong>Records:</strong> <span id="deleteModalRecordCount"></span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteTableBtn">
+                        <i class="fas fa-trash"></i> Delete Table
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
+    <script>
+        // Global variables
+        let allTables = [];
+        let globalTables = [];
+        let localTables = [];
+        let filteredGlobalTables = [];
+        let filteredLocalTables = [];
+        let currentSchema = null;
+        const projectId = '{{ project_id }}';
+
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchTables = document.getElementById('searchTables');
+            const loading = document.querySelector('.loading');
+            const alertContainer = document.getElementById('alertContainer');
+            const tablesDisplaySection = document.getElementById('tablesDisplaySection');
+            const noTablesMessage = document.getElementById('noTablesMessage');
+            const addTableSelect = document.getElementById('addTableSelect');
+
+            // Search functionality
+            searchTables.addEventListener('input', (e) => {
+                const searchTerm = e.target.value.toLowerCase();
+                filterTables(searchTerm);
+            });
+
+            function loadUserTables(projectId) {
+                showLoading('Loading project tables...');
+                clearAlerts();
+                hideSections();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch(`/api/api-list-uploaded-tables/${projectId}/`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        globalTables = data.global_tables || [];
+                        localTables = data.local_tables || [];
+                        allTables = [...globalTables, ...localTables];
+                        filteredGlobalTables = [...globalTables];
+                        filteredLocalTables = [...localTables];
+                        // Store schema from API response
+                        currentSchema = data.schema;
+                        displayTables();
+                        showAlert(data.message, 'success');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Failed to load tables: ${error.message}`, 'danger');
+                });
+            }
+
+            function displayTables() {
+                const tablesList = document.getElementById('tablesList');
+                const tableCount = document.getElementById('tableCount');
+                
+                // Additional client-side filtering to ensure only tables ending with '__' are shown
+                const globalTablesFiltered = filteredGlobalTables.filter(table => 
+                    table.table_name.endsWith('__')
+                );
+                
+                const localTablesFiltered = filteredLocalTables.filter(table => 
+                    table.table_name.endsWith('__')
+                );
+                
+                const totalTables = globalTablesFiltered.length + localTablesFiltered.length;
+                
+                if (totalTables === 0) {
+                    noTablesMessage.style.display = 'block';
+                    tablesDisplaySection.style.display = 'none';
+                    return;
+                }
+
+                tablesDisplaySection.style.display = 'block';
+                noTablesMessage.style.display = 'none';
+                
+                tableCount.textContent = `${totalTables} table${totalTables !== 1 ? 's' : ''} found (${globalTablesFiltered.length} global, ${localTablesFiltered.length} local)`;
+                
+                let tablesHtml = '';
+                
+                // Display Global Tables
+                if (globalTablesFiltered.length > 0) {
+                    tablesHtml += `
+                        <div class="mb-4">
+                            <h5 class="mb-3" style="color: #007bff; border-bottom: 2px solid #007bff; padding-bottom: 0.5rem;">
+                                <i class="fas fa-globe"></i> Global Tables (${globalTablesFiltered.length})
+                            </h5>
+                            <div class="row">
+                    `;
+                    
+                    globalTablesFiltered.forEach(table => {
+                        // Remove double underscores from display name
+                        const displayName = table.table_name.replace(/__$/, '');
+                        const schema = table.schema || '';
+                        
+                        tablesHtml += `
+                            <div class="col-md-4 col-lg-3 mb-3">
+                                <div class="table-card">
+                                    <div class="table-header">
+                                        <div class="table-name">${displayName}</div>
+                                    </div>
+                                    <div class="table-actions">
+                                        <button class="btn btn-outline-primary btn-sm" onclick="viewTableData('${table.table_name}', '${schema}')">
+                                            <i class="fas fa-table"></i> View Data
+                                        </button>
+                                        <button class="btn btn-outline-warning btn-sm" onclick="editTableStructure('${table.table_name}', '${schema}')">
+                                            <i class="fas fa-edit"></i> Edit Structure
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" onclick="deleteTable('${table.table_name}', '${schema}')">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    tablesHtml += `
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Display Local Tables
+                if (localTablesFiltered.length > 0) {
+                    tablesHtml += `
+                        <div class="mb-4">
+                            <h5 class="mb-3" style="color: #28a745; border-bottom: 2px solid #28a745; padding-bottom: 0.5rem;">
+                                <i class="fas fa-folder"></i> Local Tables (${localTablesFiltered.length})
+                            </h5>
+                            <div class="row">
+                    `;
+                    
+                    localTablesFiltered.forEach(table => {
+                        // Remove double underscores from display name
+                        const displayName = table.table_name.replace(/__$/, '');
+                        const schema = table.schema || '';
+                        
+                        tablesHtml += `
+                            <div class="col-md-4 col-lg-3 mb-3">
+                                <div class="table-card" style="border-left: 4px solid #28a745;">
+                                    <div class="table-header">
+                                        <div class="table-name" style="color: #28a745;">${displayName}</div>
+                                    </div>
+                                    <div class="table-actions">
+                                        <button class="btn btn-outline-primary btn-sm" onclick="viewTableData('${table.table_name}', '${schema}')">
+                                            <i class="fas fa-table"></i> View Data
+                                        </button>
+                                        <button class="btn btn-outline-warning btn-sm" onclick="editTableStructure('${table.table_name}', '${schema}')">
+                                            <i class="fas fa-edit"></i> Edit Structure
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" onclick="deleteTable('${table.table_name}', '${schema}')">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    tablesHtml += `
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                tablesList.innerHTML = tablesHtml;
+            }
+
+            function filterTables(searchTerm) {
+                if (!searchTerm) {
+                    filteredGlobalTables = [...globalTables];
+                    filteredLocalTables = [...localTables];
+                } else {
+                    filteredGlobalTables = globalTables.filter(table => 
+                        table.table_name.toLowerCase().includes(searchTerm) && table.table_name.endsWith('__')
+                    );
+                    filteredLocalTables = localTables.filter(table => 
+                        table.table_name.toLowerCase().includes(searchTerm) && table.table_name.endsWith('__')
+                    );
+                }
+                displayTables();
+            }
+
+            // Handle Add Table dropdown
+            if (addTableSelect) {
+                addTableSelect.addEventListener('change', function(e) {
+                    const value = e.target.value;
+                    if (value === 'file') {
+                        // Use the schema from API response
+                        window.location.href = '{% url "file_upload" %}?schema=' + encodeURIComponent(currentSchema);
+                    } else if (value === 'manually') {
+                        // Redirect to create table page
+                        window.location.href = '{% url "create_table" %}?schema=' + encodeURIComponent(currentSchema);
+                    }
+                });
+            }
+
+            function viewTableData(tableName, schema) {
+                if (!projectId) {
+                    showAlert('Project ID not found', 'warning');
+                    return;
+                }
+                
+                // Redirect to table data display page with schema parameter
+                window.location.href = `/api/table-data/${projectId}/?table_name=${encodeURIComponent(tableName)}&schema=${encodeURIComponent(schema)}`;
+            }
+
+
+            function hideSections() {
+                tablesDisplaySection.style.display = 'none';
+                noTablesMessage.style.display = 'none';
+            }
+
+            function showLoading(text = 'Loading...') {
+                document.getElementById('loadingText').textContent = text;
+                loading.style.display = 'block';
+            }
+
+            function hideLoading() {
+                loading.style.display = 'none';
+            }
+
+            function showAlert(message, type) {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+                alertDiv.innerHTML = `
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                alertContainer.appendChild(alertDiv);
+            }
+
+            function clearAlerts() {
+                alertContainer.innerHTML = '';
+            }
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+
+            // Edit table structure function
+            function editTableStructure(tableName, schema) {
+                if (!schema) {
+                    showAlert('Schema not found', 'warning');
+                    return;
+                }
+                
+                // Store original table name and schema for API calls
+                window.currentEditingTableName = tableName;
+                window.currentEditingSchema = schema;
+                
+                // Show loading state
+                document.getElementById('editStructureLoading').style.display = 'block';
+                document.getElementById('editStructureError').style.display = 'none';
+                document.getElementById('editStructureTable').style.display = 'none';
+                document.getElementById('editStructureInfo').style.display = 'none';
+                
+                // Update modal title and table name (remove __ for display)
+                const displayTableName = tableName.replace(/__$/, '');
+                document.getElementById('editModalTableName').textContent = displayTableName;
+                
+                // Update modal title to show clean table name
+                document.getElementById('editStructureModalLabel').textContent = `Edit Table Structure - ${displayTableName}`;
+                
+                const csrfToken = getCookie('csrftoken');
+                
+                fetch('{% url "get-table-data-api" %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ 
+                        schema: schema,
+                        table_name: tableName,
+                        page: 1,
+                        page_size: 1  // Just need column metadata, no actual data
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    document.getElementById('editStructureLoading').style.display = 'none';
+                    
+                    if (data.error) {
+                        showEditStructureError(data.error);
+                    } else {
+                        displayEditStructure(data, tableName);
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('editStructureLoading').style.display = 'none';
+                    showEditStructureError(`Failed to load table structure: ${error.message}`);
+                });
+            }
+            
+            function displayEditStructure(data, tableName) {
+                const tableHeaders = document.getElementById('editStructureHeaders');
+                const tableBody = document.getElementById('editStructureBody');
+                const recordCount = document.getElementById('editModalRecordCount');
+                
+                // Update record count
+                recordCount.textContent = data.pagination ? data.pagination.total_records : data.total_records || 0;
+                
+                // Clear previous data
+                tableHeaders.innerHTML = '';
+                tableBody.innerHTML = '';
+                document.getElementById('newColumnsContainer').innerHTML = '';
+                
+                // Always show structure editing interface without sample data
+                // Create headers row
+                tableHeaders.innerHTML = '<th class="text-center" style="font-size: 0.7rem;">Column Name <small class="text-muted">(click to edit)</small></th><th class="text-center" style="font-size: 0.7rem;">Data Type</th><th class="text-center" style="font-size: 0.7rem;">Actions</th>';
+                
+                // Add columns from the metadata, excluding system-generated fields
+                data.columns.forEach((column, index) => {
+                    // Skip system-generated fields that are automatically added
+                    if (column.name === '__id' || column.name === '__active') {
+                        return;
+                    }
+                    
+                    // Create row for each column
+                    const row = document.createElement('tr');
+                    row.setAttribute('data-column', column.name);
+                    row.setAttribute('data-original-name', column.name);
+                    
+                    // Column name cell (editable on click)
+                    const nameTd = document.createElement('td');
+                    nameTd.className = 'text-center editable-cell';
+                    nameTd.style.fontSize = '0.7rem';
+                    nameTd.setAttribute('data-column', column.name);
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'column-name-display fw-bold';
+                    nameSpan.textContent = column.name;
+                    nameSpan.contentEditable = false;
+                    
+                    nameTd.appendChild(nameSpan);
+                    
+                    // Make cell editable on click
+                    nameTd.addEventListener('click', function() {
+                        if (!nameSpan.contentEditable || nameSpan.contentEditable === 'false') {
+                            nameSpan.contentEditable = true;
+                            nameSpan.focus();
+                            nameTd.classList.add('editing');
+                            
+                            // Select all text
+                            const range = document.createRange();
+                            range.selectNodeContents(nameSpan);
+                            const sel = window.getSelection();
+                            sel.removeAllRanges();
+                            sel.addRange(range);
+                        }
+                    });
+                    
+                    // Handle blur event to save changes
+                    nameSpan.addEventListener('blur', function() {
+                        nameSpan.contentEditable = false;
+                        nameTd.classList.remove('editing');
+                        // Clean up the name (remove extra spaces)
+                        nameSpan.textContent = nameSpan.textContent.trim().replace(/\s+/g, '_');
+                    });
+                    
+                    // Handle Enter key to finish editing
+                    nameSpan.addEventListener('keydown', function(e) {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            nameSpan.blur();
+                        }
+                    });
+                    
+                    row.appendChild(nameTd);
+                    
+                    // Data type cell with dropdown
+                    const typeTd = document.createElement('td');
+                    typeTd.className = 'text-center';
+                    
+                    const typeSelect = document.createElement('select');
+                    typeSelect.className = 'form-select form-select-sm column-type';
+                    typeSelect.setAttribute('data-column', column.name);
+                    typeSelect.style.minWidth = '80px';
+                    typeSelect.style.fontSize = '0.7rem';
+                    typeSelect.style.padding = '0.2rem 0.4rem';
+                    
+                    // Get current data type from the column information
+                    let currentType = 'VARCHAR(255)'; // Default fallback
+                    
+                    if (column.type) {
+                        currentType = column.type;
+                    }
+                    
+                    // Create options for different data types
+                    const dataTypes = [
+                        'VARCHAR(255)', 'VARCHAR(50)', 'VARCHAR(100)', 'VARCHAR(500)', 'VARCHAR(1000)',
+                        'INTEGER', 'BIGINT', 'REAL', 'DATE', 'TIMESTAMP', 'TEXT', 'BOOLEAN',
+                        'SERIAL', 'BIGSERIAL', 'SMALLINT', 'DOUBLE PRECISION', 'NUMERIC', 'NUMERIC(10,2)', 'NUMERIC(15,4)',
+                        'DECIMAL', 'DECIMAL(10,2)', 'DECIMAL(15,4)', 'FLOAT', 'FLOAT4', 'FLOAT8'
+                    ];
+                    
+                    // Normalize the current type for comparison
+                    const normalizedCurrentType = currentType.toUpperCase();
+                    let selectedType = 'VARCHAR(255)'; // Default selection
+                    
+                    // Enhanced type matching logic - order matters for precision
+                    if (normalizedCurrentType.includes('SERIAL')) {
+                        selectedType = 'SERIAL';
+                    } else if (normalizedCurrentType.includes('BIGSERIAL')) {
+                        selectedType = 'BIGSERIAL';
+                    } else if (normalizedCurrentType.includes('SMALLINT')) {
+                        selectedType = 'SMALLINT';
+                    } else if (normalizedCurrentType.includes('BIGINT')) {
+                        selectedType = 'BIGINT';
+                    } else if (normalizedCurrentType.includes('INTEGER') || normalizedCurrentType === 'INT') {
+                        selectedType = 'INTEGER';
+                    } else if (normalizedCurrentType.includes('DOUBLE PRECISION')) {
+                        selectedType = 'DOUBLE PRECISION';
+                    } else if (normalizedCurrentType.includes('FLOAT8')) {
+                        selectedType = 'FLOAT8';
+                    } else if (normalizedCurrentType.includes('FLOAT4')) {
+                        selectedType = 'FLOAT4';
+                    } else if (normalizedCurrentType.includes('FLOAT')) {
+                        selectedType = 'FLOAT';
+                    } else if (normalizedCurrentType.includes('REAL')) {
+                        selectedType = 'REAL';
+                    } else if (normalizedCurrentType.includes('NUMERIC') || normalizedCurrentType.includes('DECIMAL')) {
+                        // Extract precision and scale from NUMERIC/DECIMAL types
+                        const numericMatch = currentType.match(/\((\d+),(\d+)\)/);
+                        if (numericMatch) {
+                            const precision = parseInt(numericMatch[1]);
+                            const scale = parseInt(numericMatch[2]);
+                            if (precision <= 10 && scale <= 2) {
+                                selectedType = 'NUMERIC(10,2)';
+                            } else if (precision <= 15 && scale <= 4) {
+                                selectedType = 'NUMERIC(15,4)';
+                            } else {
+                                selectedType = 'NUMERIC';
+                            }
+                        } else {
+                            selectedType = 'NUMERIC';
+                        }
+                    } else if (normalizedCurrentType.includes('BOOLEAN') || normalizedCurrentType.includes('BOOL')) {
+                        selectedType = 'BOOLEAN';
+                    } else if (normalizedCurrentType.includes('DATE')) {
+                        selectedType = 'DATE';
+                    } else if (normalizedCurrentType.includes('TIMESTAMP')) {
+                        selectedType = 'TIMESTAMP';
+                    } else if (normalizedCurrentType.includes('TEXT')) {
+                        selectedType = 'TEXT';
+                    } else if (normalizedCurrentType.includes('CHARACTER VARYING') || normalizedCurrentType.includes('VARCHAR')) {
+                        // Extract length from VARCHAR types
+                        const lengthMatch = currentType.match(/\((\d+)\)/);
+                        if (lengthMatch) {
+                            const length = parseInt(lengthMatch[1]);
+                            if (length <= 50) selectedType = 'VARCHAR(50)';
+                            else if (length <= 100) selectedType = 'VARCHAR(100)';
+                            else if (length <= 500) selectedType = 'VARCHAR(500)';
+                            else if (length <= 1000) selectedType = 'VARCHAR(1000)';
+                            else selectedType = 'VARCHAR(255)';
+                        } else {
+                            selectedType = 'VARCHAR(255)';
+                        }
+                    }
+                    
+                    dataTypes.forEach(type => {
+                        const option = document.createElement('option');
+                        option.value = type;
+                        option.textContent = type;
+                        
+                        // Set selected based on our enhanced matching
+                        if (type === selectedType) {
+                            option.selected = true;
+                        }
+                        
+                        typeSelect.appendChild(option);
+                    });
+                    
+                    typeTd.appendChild(typeSelect);
+                    row.appendChild(typeTd);
+                    
+                    // Actions cell
+                    const actionsTd = document.createElement('td');
+                    actionsTd.className = 'text-center';
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn btn-sm btn-outline-danger';
+                    deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
+                    deleteBtn.title = 'Delete Column';
+                    deleteBtn.style.fontSize = '0.7rem';
+                    deleteBtn.style.padding = '0.2rem 0.4rem';
+                    deleteBtn.onclick = () => deleteColumn(column.name);
+                    
+                    actionsTd.appendChild(deleteBtn);
+                    row.appendChild(actionsTd);
+                    
+                    tableBody.appendChild(row);
+                });
+                
+                // Show the table
+                document.getElementById('editStructureTable').style.display = 'table';
+                document.getElementById('editStructureInfo').style.display = 'block';
+                
+                // Show the modal
+                const editModal = new bootstrap.Modal(document.getElementById('editStructureModal'));
+                editModal.show();
+                return;
+                
+            }
+            
+            function showEditStructureError(message) {
+                const errorDiv = document.getElementById('editStructureError');
+                errorDiv.innerHTML = message;
+                errorDiv.style.display = 'block';
+                document.getElementById('editStructureTable').style.display = 'none';
+                document.getElementById('editStructureInfo').style.display = 'none';
+            }
+            
+            // Add column functionality
+            let newColumnCounter = 0;
+            
+            document.getElementById('addColumnBtn').addEventListener('click', function() {
+                addNewColumnRow();
+            });
+            
+            function addNewColumnRow() {
+                const container = document.getElementById('newColumnsContainer');
+                const rowId = `newColumn_${newColumnCounter++}`;
+                
+                const row = document.createElement('div');
+                row.className = 'row mb-1 new-column-row';
+                row.id = rowId;
+                
+                row.innerHTML = `
+                    <div class="col-md-4">
+                        <input type="text" class="form-control form-control-sm new-column-name" 
+                               placeholder="Column name" required style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select form-select-sm new-column-type" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">
+                            <option value="VARCHAR(255)">VARCHAR(255)</option>
+                            <option value="VARCHAR(50)">VARCHAR(50)</option>
+                            <option value="VARCHAR(100)">VARCHAR(100)</option>
+                            <option value="VARCHAR(500)">VARCHAR(500)</option>
+                            <option value="VARCHAR(1000)">VARCHAR(1000)</option>
+                            <option value="INTEGER">INTEGER</option>
+                            <option value="BIGINT">BIGINT</option>
+                            <option value="REAL">REAL</option>
+                            <option value="DATE">DATE</option>
+                            <option value="TIMESTAMP">TIMESTAMP</option>
+                            <option value="TEXT">TEXT</option>
+                            <option value="BOOLEAN">BOOLEAN</option>
+                            <option value="SERIAL">SERIAL</option>
+                            <option value="BIGSERIAL">BIGSERIAL</option>
+                            <option value="SMALLINT">SMALLINT</option>
+                            <option value="DOUBLE PRECISION">DOUBLE PRECISION</option>
+                            <option value="NUMERIC">NUMERIC</option>
+                            <option value="NUMERIC(10,2)">NUMERIC(10,2)</option>
+                            <option value="NUMERIC(15,4)">NUMERIC(15,4)</option>
+                            <option value="DECIMAL">DECIMAL</option>
+                            <option value="DECIMAL(10,2)">DECIMAL(10,2)</option>
+                            <option value="DECIMAL(15,4)">DECIMAL(15,4)</option>
+                            <option value="FLOAT">FLOAT</option>
+                            <option value="FLOAT4">FLOAT4</option>
+                            <option value="FLOAT8">FLOAT8</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeNewColumnRow('${rowId}')" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">
+                            <i class="fas fa-trash"></i> Remove
+                        </button>
+                    </div>
+                `;
+                
+                container.appendChild(row);
+            }
+            
+            function removeNewColumnRow(rowId) {
+                const row = document.getElementById(rowId);
+                if (row) {
+                    row.remove();
+                }
+            }
+            
+            function deleteColumn(columnName) {
+                if (confirm(`Are you sure you want to delete column '${columnName}'? This action cannot be undone.`)) {
+                    // Mark the row for deletion
+                    const row = document.querySelector(`tr[data-column="${columnName}"]`);
+                    if (row) {
+                        row.style.opacity = '0.5';
+                        row.style.textDecoration = 'line-through';
+                        row.setAttribute('data-marked-for-deletion', 'true');
+                    }
+                }
+            }
+            
+            // Make functions globally available
+            window.removeNewColumnRow = removeNewColumnRow;
+            window.deleteColumn = deleteColumn;
+
+            // Save structure changes
+            document.getElementById('saveStructureBtn').addEventListener('click', function() {
+                const tableName = window.currentEditingTableName; // Use original table name with __
+                const schema = window.currentEditingSchema;
+                
+                if (!schema) {
+                    showAlert('Schema not found', 'warning');
+                    return;
+                }
+                
+                // Collect column type changes
+                const columnChanges = {};
+                const typeSelects = document.querySelectorAll('.column-type');
+                
+                typeSelects.forEach(select => {
+                    const columnName = select.getAttribute('data-column');
+                    const newType = select.value;
+                    columnChanges[columnName] = newType;
+                });
+                
+                // Collect column rename information
+                const columnRenames = {};
+                const editableCells = document.querySelectorAll('.editable-cell');
+                
+                editableCells.forEach(cell => {
+                    const originalName = cell.getAttribute('data-column');
+                    const nameSpan = cell.querySelector('.column-name-display');
+                    const newName = nameSpan.textContent.trim().replace(/\s+/g, '_');
+                    if (newName && newName !== originalName) {
+                        columnRenames[originalName] = newName;
+                    }
+                });
+                
+                // Collect new columns to add
+                const columnsToAdd = [];
+                const newColumnRows = document.querySelectorAll('.new-column-row');
+                
+                newColumnRows.forEach(row => {
+                    const nameInput = row.querySelector('.new-column-name');
+                    const typeSelect = row.querySelector('.new-column-type');
+                    
+                    if (nameInput.value.trim()) {
+                        columnsToAdd.push({
+                            name: nameInput.value.trim().replace(/\s+/g, '_'),
+                            type: typeSelect.value
+                        });
+                    }
+                });
+                
+                // Collect columns to delete
+                const columnsToDelete = [];
+                const markedForDeletion = document.querySelectorAll('tr[data-marked-for-deletion="true"]');
+                
+                markedForDeletion.forEach(row => {
+                    const columnName = row.getAttribute('data-column');
+                    if (columnName) {
+                        columnsToDelete.push(columnName);
+                    }
+                });
+                
+                // Show loading
+                showLoading('Saving structure changes...');
+                
+                const csrfToken = getCookie('csrftoken');
+                
+                fetch('{% url "update-table-structure-api" %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        schema: schema,
+                        table_name: tableName,
+                        column_changes: columnChanges,
+                        column_renames: columnRenames,
+                        columns_to_add: columnsToAdd,
+                        columns_to_delete: columnsToDelete
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        // Show success message
+                        showAlert(data.message, 'success');
+                        
+                        // Show detailed information about operations
+                        if (data.renamed_columns && data.renamed_columns.length > 0) {
+                            showAlert(`Renamed columns: ${data.renamed_columns.join(', ')}`, 'info');
+                        }
+                        if (data.added_columns && data.added_columns.length > 0) {
+                            showAlert(`Added columns: ${data.added_columns.join(', ')}`, 'info');
+                        }
+                        if (data.deleted_columns && data.deleted_columns.length > 0) {
+                            showAlert(`Deleted columns: ${data.deleted_columns.join(', ')}`, 'info');
+                        }
+                        if (data.updated_columns && data.updated_columns.length > 0) {
+                            showAlert(`Updated columns: ${data.updated_columns.join(', ')}`, 'info');
+                        }
+                        
+                        // Show warnings if any
+                        if (data.warnings && data.warnings.length > 0) {
+                            data.warnings.forEach(warning => {
+                                showAlert(warning, 'warning');
+                            });
+                        }
+                        
+                        // Close modal
+                        const editModal = bootstrap.Modal.getInstance(document.getElementById('editStructureModal'));
+                        editModal.hide();
+                        
+                        // Reload tables list to reflect changes
+                        loadUserTables(projectId);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Failed to save structure changes: ${error.message}`, 'danger');
+                });
+            });
+
+            // Delete table function
+            function deleteTable(tableName, schema) {
+                if (!schema) {
+                    showAlert('Schema not found', 'warning');
+                    return;
+                }
+                
+                // Store table name and schema for confirmation
+                window.currentDeletingTableName = tableName;
+                window.currentDeletingSchema = schema;
+                
+                // Get table record count for confirmation
+                const csrfToken = getCookie('csrftoken');
+                
+                fetch('{% url "get-table-data-api" %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ 
+                        schema: schema,
+                        table_name: tableName,
+                        page: 1,
+                        page_size: 1  // Just need the count
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Update modal with table info
+                    document.getElementById('deleteModalTableName').textContent = tableName;
+                    document.getElementById('deleteModalRecordCount').textContent = data.pagination ? data.pagination.total_records : data.total_records || 0;
+                    
+                    // Show the modal
+                    const deleteModal = new bootstrap.Modal(document.getElementById('deleteTableModal'));
+                    deleteModal.show();
+                })
+                .catch(error => {
+                    // If we can't get the count, still show the modal
+                    document.getElementById('deleteModalTableName').textContent = tableName;
+                    document.getElementById('deleteModalRecordCount').textContent = 'Unknown';
+                    
+                    const deleteModal = new bootstrap.Modal(document.getElementById('deleteTableModal'));
+                    deleteModal.show();
+                });
+            }
+            
+            // Confirm delete table
+            document.getElementById('confirmDeleteTableBtn').addEventListener('click', function() {
+                const tableName = window.currentDeletingTableName;
+                const schema = window.currentDeletingSchema;
+                
+                if (!schema) {
+                    showAlert('Schema not found', 'warning');
+                    return;
+                }
+                
+                // Show loading
+                showLoading('Deleting table...');
+                
+                const csrfToken = getCookie('csrftoken');
+                
+                fetch('{% url "delete-table-api" %}', {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        schema: schema,
+                        table_name: tableName
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        showAlert(data.message, 'success');
+                        // Close modal
+                        const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteTableModal'));
+                        deleteModal.hide();
+                        // Reload tables list
+                        loadUserTables(projectId);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Failed to delete table: ${error.message}`, 'danger');
+                });
+            });
+
+            // Make functions globally available
+            window.viewTableData = viewTableData;
+            window.editTableStructure = editTableStructure;
+            window.deleteTable = deleteTable;
+            
+            // Auto-load tables on page load with project_id
+            if (projectId) {
+                loadUserTables(projectId);
+            }
+        });
+    </script>
+</div>
+{% endblock %}

@@ -1,0 +1,74 @@
+/* Tailwind CSS removed - using Chakra UI instead */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f5f5f5;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Custom animations */
+@keyframes slide-in-from-top {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation: slide-in-from-top 0.3s ease-out;
+}
+
+/* Node completion: noticeable glow and badge pop so user sees each node finish */
+@keyframes node-complete-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(72, 187, 120, 0);
+  }
+  40% {
+    box-shadow: 0 0 18px 4px rgba(72, 187, 120, 0.35);
+  }
+  100% {
+    box-shadow: 0 0 10px 3px rgba(72, 187, 120, 0.2);
+  }
+}
+
+@keyframes node-complete-badge {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}.node-complete-glow {
+  animation: node-complete-glow 0.6s ease-out forwards;
+}.node-complete-badge {
+  animation: node-complete-badge 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}

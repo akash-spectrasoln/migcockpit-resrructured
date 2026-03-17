@@ -1,0 +1,583 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Edit Destination Connection{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .page {
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      display: grid;
+      gap: 1rem;
+    }
+    h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 1.5rem;
+      color: #1a1a1a;
+    }
+    .customer-info {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #6b7280;
+      margin-bottom: 1rem;
+    }
+    form {
+      width: 100%;
+      display: grid;
+      gap: 1rem;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      border: 1px solid #e8eaf0;
+      box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06);
+    }
+    .form-group {
+      display: grid;
+      gap: 0.5rem;
+    }
+    label {
+      font-weight: 600;
+      color: #374151;
+      font-size: 0.9rem;
+    }
+    .required {
+      color: #dc2626;
+    }
+    input, select {
+      padding: 0.75rem;
+      font-size: 1rem;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    input:focus, select:focus {
+      border-color: #7f56d9;
+      box-shadow: 0 0 0 3px rgba(127, 86, 217, 0.15);
+    }
+    .help-text {
+      color: #6b7280;
+      font-size: 0.85rem;
+      margin-top: 0.25rem;
+    }
+    button {
+      padding: 0.875rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid;
+      transition: all 0.2s ease;
+      margin-top: 0.5rem;
+    }
+    .btn-primary {
+      background: #7f56d9;
+      border-color: #7f56d9;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #6941c6;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(127, 86, 217, 0.3);
+    }
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+    .btn-primary:disabled {
+      background: #9ca3af;
+      border-color: #9ca3af;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-secondary {
+      background: #fff;
+      border-color: #d1d5db;
+      color: #374151;
+    }
+    .btn-secondary:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+    }
+    #result {
+      margin-top: 1rem;
+      white-space: pre-wrap;
+      background: #fff;
+      border: 1px solid #e8eaf0;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.9rem;
+      min-height: 60px;
+    }
+    .error {
+      color: #dc2626;
+      background: #fef2f2;
+      border-color: #fecaca;
+    }
+    .success {
+      color: #059669;
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
+    .loading {
+      color: #6b7280;
+      background: #f9fafb;
+      border-color: #e5e7eb;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .status-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .toggle-switch {
+      position: relative;
+      width: 48px;
+      height: 24px;
+      background: #d1d5db;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .toggle-switch.active {
+      background: #7f56d9;
+    }
+    .toggle-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s ease;
+    }
+    .toggle-switch.active::after {
+      transform: translateX(24px);
+    }
+    .toggle-label {
+      font-size: 0.9rem;
+      color: #374151;
+    }
+    .conditional-field {
+      display: none;
+    }
+    .conditional-field.show {
+      display: grid;
+    }
+    @media (max-width: 640px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="page">
+    <h1>Edit Destination Connection</h1>
+    <div class="customer-info" id="customer-info">Loading...</div>
+    
+    <form id="edit-destination-form">
+      {% csrf_token %}
+      
+      <div class="form-group">
+        <label for="destination_name">Destination Name <span class="required">*</span></label>
+        <input id="destination_name" name="destination_name" type="text" required placeholder="e.g., HANA Production" />
+        <div class="help-text">A descriptive name for this destination connection</div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="hostname">Hostname <span class="required">*</span></label>
+          <input id="hostname" name="hostname" type="text" required placeholder="e.g., tenant.example.com" />
+          <div class="help-text">Destination server hostname or IP address</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="instance_number">Instance Number <span class="required">*</span></label>
+          <input id="instance_number" name="instance_number" type="number" required placeholder="e.g., 11" />
+          <div class="help-text">SAP HANA instance number</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="mode">Mode <span class="required">*</span></label>
+        <select id="mode" name="mode" required onchange="toggleDatabaseFields()">
+          <option value="">Select mode</option>
+          <option value="single_container">Single Container</option>
+          <option value="multiple_containers">Multiple Containers</option>
+        </select>
+        <div class="help-text">Choose the deployment mode for your destination</div>
+      </div>
+
+      <div class="form-group conditional-field" id="database-type-group">
+        <label for="database_type">Database Type <span class="required">*</span></label>
+        <select id="database_type" name="database_type" onchange="toggleDatabaseNameFields()">
+          <option value="">Select database type</option>
+          <option value="tenant_database">Tenant Database</option>
+          <option value="system_database">System Database</option>
+        </select>
+        <div class="help-text">Required when mode is Multiple Containers</div>
+      </div>
+
+      <div class="form-group conditional-field" id="tenant-db-group">
+        <label for="tenant_db_name">Tenant Database Name <span class="required">*</span></label>
+        <input id="tenant_db_name" name="tenant_db_name" type="text" placeholder="e.g., TB_NAME" />
+        <div class="help-text">Required when database type is Tenant Database</div>
+      </div>
+
+      <div class="form-group conditional-field" id="system-db-group">
+        <label for="system_db_name">System Database Name <span class="required">*</span></label>
+        <input id="system_db_name" name="system_db_name" type="text" placeholder="e.g., SYSTEMDB" />
+        <div class="help-text">Required when database type is System Database</div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="destination_schema_name">Destination Schema Name <span class="required">*</span></label>
+          <input id="destination_schema_name" name="destination_schema_name" type="text" required placeholder="e.g., GENERAL" />
+          <div class="help-text">Schema name for the destination database</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="s4_schema_name">S4 Schema Name <span class="required">*</span></label>
+          <input id="s4_schema_name" name="s4_schema_name" type="text" required placeholder="e.g., MIG" />
+          <div class="help-text">S4 schema name for the destination database</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="status-toggle">
+          <div class="toggle-switch" id="status-toggle" onclick="toggleStatus()"></div>
+          <span class="toggle-label" id="status-label">Active</span>
+        </div>
+        <div class="help-text">Toggle to activate or deactivate this destination connection</div>
+      </div>
+
+      <div class="form-row">
+        <button type="button" class="btn-secondary" onclick="goBack()">Cancel</button>
+        <button type="submit" class="btn-primary" id="submit-btn">Update Destination Connection</button>
+      </div>
+    </form>
+    
+    <div id="result"></div>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    // Get CSRF token from cookie (Django pattern)
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    const form = document.getElementById('edit-destination-form');
+    const result = document.getElementById('result');
+    const submitBtn = document.getElementById('submit-btn');
+    const customerInfo = document.getElementById('customer-info');
+    const statusToggle = document.getElementById('status-toggle');
+    const statusLabel = document.getElementById('status-label');
+
+    // Get customer ID and destination name from Django context
+    const destination_id = '{{ destination_id }}';
+    
+    console.log('Destination Name from context:', destination_id);
+    
+    // Validate that we have the required parameters
+    if (!destination_id) {
+        result.className = 'error';
+        result.textContent = '❌ Missing destination id in context';
+        throw new Error('Missing or invalid destination name in context.');
+    }
+    
+    // Debug the constructed API URL
+    const apiUrl = `/api/api-customer/destinations/${encodeURIComponent(destination_id)}/edit/`;
+    console.log('Constructed API URL:', apiUrl);
+    console.log('Destination ID extracted:', destination_id);
+
+    let currentDestinationData = null;
+
+    function toggleStatus() {
+      const isActive = statusToggle.classList.contains('active');
+      statusToggle.classList.toggle('active');
+      statusLabel.textContent = isActive ? 'Inactive' : 'Active';
+    }
+
+    function toggleDatabaseFields() {
+      const mode = document.getElementById('mode').value;
+      const databaseTypeGroup = document.getElementById('database-type-group');
+      const tenantDbGroup = document.getElementById('tenant-db-group');
+      const systemDbGroup = document.getElementById('system-db-group');
+      
+      if (mode === 'multiple_containers') {
+        databaseTypeGroup.classList.add('show');
+      } else {
+        databaseTypeGroup.classList.remove('show');
+        tenantDbGroup.classList.remove('show');
+        systemDbGroup.classList.remove('show');
+        // Clear values when hiding
+        document.getElementById('database_type').value = '';
+        document.getElementById('tenant_db_name').value = '';
+        document.getElementById('system_db_name').value = '';
+      }
+    }
+
+    function toggleDatabaseNameFields() {
+      const databaseType = document.getElementById('database_type').value;
+      const tenantDbGroup = document.getElementById('tenant-db-group');
+      const systemDbGroup = document.getElementById('system-db-group');
+      
+      if (databaseType === 'tenant_database') {
+        tenantDbGroup.classList.add('show');
+        systemDbGroup.classList.remove('show');
+        document.getElementById('system_db_name').value = '';
+      } else if (databaseType === 'system_database') {
+        systemDbGroup.classList.add('show');
+        tenantDbGroup.classList.remove('show');
+        document.getElementById('tenant_db_name').value = '';
+      } else {
+        tenantDbGroup.classList.remove('show');
+        systemDbGroup.classList.remove('show');
+        document.getElementById('tenant_db_name').value = '';
+        document.getElementById('system_db_name').value = '';
+      }
+    }
+
+    function goBack() {
+      window.history.back();
+    }
+
+    // Form validation
+    function validateForm() {
+      const requiredFields = ['destination_name', 'hostname', 'instance_number', 'mode', 'destination_schema_name', 's4_schema_name'];
+      let isValid = true;
+      
+      requiredFields.forEach(fieldName => {
+        const field = document.getElementById(fieldName);
+        if (!field.value.trim()) {
+          field.style.borderColor = '#dc2626';
+          isValid = false;
+        } else {
+          field.style.borderColor = '#d0d5dd';
+        }
+      });
+
+      // Validate conditional fields
+      const mode = document.getElementById('mode').value;
+      if (mode === 'multiple_containers') {
+        const databaseType = document.getElementById('database_type');
+        if (!databaseType.value.trim()) {
+          databaseType.style.borderColor = '#dc2626';
+          isValid = false;
+        } else {
+          databaseType.style.borderColor = '#d0d5dd';
+        }
+
+        if (databaseType.value === 'tenant_database') {
+          const tenantDbName = document.getElementById('tenant_db_name');
+          if (!tenantDbName.value.trim()) {
+            tenantDbName.style.borderColor = '#dc2626';
+            isValid = false;
+          } else {
+            tenantDbName.style.borderColor = '#d0d5dd';
+          }
+        } else if (databaseType.value === 'system_database') {
+          const systemDbName = document.getElementById('system_db_name');
+          if (!systemDbName.value.trim()) {
+            systemDbName.style.borderColor = '#dc2626';
+            isValid = false;
+          } else {
+            systemDbName.style.borderColor = '#d0d5dd';
+          }
+        }
+      }
+      
+      return isValid;
+    }
+
+    // Real-time validation
+    document.querySelectorAll('input[required], select[required]').forEach(input => {
+      input.addEventListener('blur', validateForm);
+      input.addEventListener('input', function() {
+        if (this.value.trim()) {
+          this.style.borderColor = '#d0d5dd';
+        }
+      });
+    });
+
+    async function loadDestinationData() {
+      try {
+        result.className = 'loading';
+        result.textContent = 'Loading destination details...';
+        console.log('Attempting to fetch from URL:', apiUrl);
+
+        // Get destination data directly from the edit endpoint
+        const response = await fetch(apiUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Received data from API:', data);
+        
+        // Update customer info
+        customerInfo.textContent = `Customer: ${data.customer_name} (${data.customer_id})`;
+
+        const destination = data.destination;
+        currentDestinationData = destination;
+        console.log('Destination data:', destination);
+
+        // Populate form fields
+        console.log('Populating form fields...');
+        document.getElementById('destination_name').value = destination.destination_name || '';
+        document.getElementById('hostname').value = destination.hostname || '';
+        document.getElementById('instance_number').value = destination.instance_number || '';
+        document.getElementById('mode').value = destination.mode || '';
+        document.getElementById('database_type').value = destination.database_type || '';
+        document.getElementById('tenant_db_name').value = destination.tenant_db_name || '';
+        document.getElementById('system_db_name').value = destination.system_db_name || '';
+        document.getElementById('destination_schema_name').value = destination.destination_schema_name || '';
+        document.getElementById('s4_schema_name').value = destination.s4_schema_name || '';
+        console.log('Form fields populated');
+
+        // Set status toggle
+        if (destination.is_active) {
+          statusToggle.classList.add('active');
+          statusLabel.textContent = 'Active';
+        } else {
+          statusToggle.classList.remove('active');
+          statusLabel.textContent = 'Inactive';
+        }
+
+        // Trigger field visibility updates
+        toggleDatabaseFields();
+        toggleDatabaseNameFields();
+
+        result.textContent = '';
+
+      } catch (err) {
+        console.error('Error loading destination data:', err);
+        result.className = 'error';
+        result.textContent = `❌ Failed to load destination details: ${err.message}`;
+      }
+    }
+
+    // Handle form submission
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      console.log('Form submission started');
+      
+      if (!validateForm()) {
+        console.log('Form validation failed');
+        result.className = 'error';
+        result.textContent = '❌ Please fill in all required fields.';
+        return;
+      }
+
+      console.log('Form validation passed');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Updating...';
+      result.className = 'loading';
+      result.textContent = 'Updating destination connection details...';
+
+      // Build payload
+      const payload = {
+        destination_name: document.getElementById('destination_name').value.trim(),
+        hostname: document.getElementById('hostname').value.trim(),
+        instance_number: parseInt(document.getElementById('instance_number').value),
+        mode: document.getElementById('mode').value,
+        destination_schema_name: document.getElementById('destination_schema_name').value.trim(),
+        s4_schema_name: document.getElementById('s4_schema_name').value.trim(),
+        is_active: statusToggle.classList.contains('active')
+      };
+
+      // Add conditional fields
+      const mode = document.getElementById('mode').value;
+      if (mode === 'multiple_containers') {
+        payload.database_type = document.getElementById('database_type').value;
+        
+        if (payload.database_type === 'tenant_database') {
+          payload.tenant_db_name = document.getElementById('tenant_db_name').value.trim();
+        } else if (payload.database_type === 'system_database') {
+          payload.system_db_name = document.getElementById('system_db_name').value.trim();
+        }
+      }
+
+      // Remove null values to keep JSON clean
+      Object.keys(payload).forEach(key => {
+        if (payload[key] === null || payload[key] === '') {
+          delete payload[key];
+        }
+      });
+
+      console.log('Payload:', payload);
+      console.log('CSRF Token:', csrftoken);
+
+      try {
+        console.log('Making fetch request to:', apiUrl);
+        const res = await fetch(apiUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken || '',
+          },
+          body: JSON.stringify(payload),
+        });
+        
+        console.log('Response status:', res.status);
+        console.log('Response headers:', res.headers);
+
+        let data;
+        try {
+          data = await res.json();
+          console.log('Response data:', data);
+        } catch (jsonError) {
+          console.error('Error parsing JSON response:', jsonError);
+          result.className = 'error';
+          result.textContent = ` Invalid response from server: ${jsonError.message}`;
+          return;
+        }
+        
+        if (res.ok) {
+          result.className = 'success';
+          result.textContent = ' Destination connection updated successfully!';
+          
+          // Optionally redirect back after a delay
+          setTimeout(() => {
+            window.location.href = `/api/customer/${customerId}/destinations/`;
+          }, 2000);
+        } else {
+          result.className = 'error';
+          if (data && data.error) {
+            result.textContent = ` ${data.error}`;
+          } else {
+            result.textContent = ' Failed to update destination connection';
+          }
+        }
+      } catch (err) {
+        result.className = 'error';
+        result.textContent = ' Failed to update destination connection';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Update Destination Connection';
+      }
+    });
+
+    // Load destination data when page loads
+    document.addEventListener('DOMContentLoaded', loadDestinationData);
+  </script>
+{% endblock %}

@@ -1,0 +1,416 @@
+{% extends "base/admin_nav.html" %}
+{% block title %}Customer List{% endblock %}
+
+{% block content %}
+<style>
+    .customers-container {
+        max-width: 100%;
+        margin: 0 auto;
+        padding: 10px 20px;
+    }
+    
+    .customer-card {
+        border: 2px solid #dee2e6;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    #customers-table {
+        border: none;
+        border-collapse: separate;
+        border-spacing: 0;
+        border-radius: 8px;
+        overflow: hidden;
+        min-width: 1400px;
+        margin-bottom: 0;
+        background-color: white;
+    }
+    
+    #customers-table thead th {
+        border: none;
+        text-align: left;
+        vertical-align: middle;
+        padding: 8px 12px;
+        white-space: nowrap;
+        font-size: 0.9rem;
+        font-weight: 600;
+        position: sticky;
+        top: 0;
+        background-color: #2a2e31;
+        color: white;
+        z-index: 10;
+        line-height: 1.1;
+    }
+    
+    #customers-table thead th:first-child {
+        border-top-left-radius: 8px;
+    }
+    
+    #customers-table thead th:last-child {
+        border-top-right-radius: 8px;
+    }
+    
+    #customers-table tbody td {
+        border: none;
+        border-bottom: 1px solid #e9ecef;
+        text-align: left;
+        vertical-align: middle;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+        line-height: 1.1;
+    }
+    
+    #customers-table tbody tr {
+        background-color: white;
+    }
+    
+    #customers-table tbody tr:nth-child(even) {
+        background-color: #f8f9fa;
+    }
+    
+    #customers-table tbody tr:hover {
+        background-color: #e9ecef;
+    }
+    
+    .header-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-top: 5px;
+    }
+    
+    .btn-add-customer {
+        margin: 0;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .customers-container {
+            padding: 10px;
+        }
+        
+        #customers-table {
+            font-size: 0.75rem;
+        }
+        
+        #customers-table thead th {
+            padding: 8px 6px;
+            font-size: 0.8rem;
+        }
+        
+        #customers-table tbody td {
+            padding: 8px 6px;
+            font-size: 0.75rem;
+        }
+    }
+    
+    .text-truncate-custom {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: inline-block;
+    }
+
+    /* Context Menu - Same as table_data_display.html */
+    .context-menu {
+        position: absolute;
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        z-index: 1000;
+        min-width: 150px;
+        display: none;
+    }
+
+    .context-menu-item {
+        padding: 8px 16px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .context-menu-item:last-child {
+        border-bottom: none;
+    }
+
+    .context-menu-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    .context-menu-item.edit {
+        color: #007bff;
+    }
+
+    .context-menu-item.delete {
+        color: #dc3545;
+    }
+
+    .context-menu-item.edit:hover {
+        background-color: #e3f2fd;
+    }
+
+    .context-menu-item.delete:hover {
+        background-color: #fce4ec;
+    }
+
+    /* Row hover effect for double-click indication */
+    #customers-table tbody tr {
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+    }
+
+    #customers-table tbody tr:hover {
+        background-color: #e9ecef;
+    }
+
+    #customers-table tbody tr:active {
+        background-color: #dee2e6;
+    }
+</style>
+
+<div class="customers-container">
+    <div class="header-section">
+        <div>
+            <h2 class="mb-1">Customer List</h2>
+            <small class="text-muted" style="font-size: 0.7rem;">
+                <i class="fas fa-info-circle"></i> Double-click or Right-click for actions menu
+            </small>
+        </div>
+        <button class="btn btn-primary btn-add-customer">
+            <i class="fas fa-plus me-2"></i>Add Customer
+        </button>
+    </div>
+
+    <div class="card customer-card">
+        <div class="card-body">
+            <div id="loading-spinner" class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2 text-muted">Loading customers...</p>
+            </div>
+
+            <div id="error-message" class="alert alert-danger d-none" role="alert">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <span id="error-text"></span>
+            </div>
+
+            <div class="table-responsive" id="customers-table-container" style="display: none;">
+                <table class="table" id="customers-table">
+                    <thead>
+                        <tr>
+                            <th>Customer ID</th>
+                            <th>Name</th>
+                            <th>Street 1</th>
+                            <th>Street 2</th>
+                            <th>City</th>
+                            <th>Region</th>
+                            <th>Country</th>
+                            <th>Phone</th>
+                            <th>Database</th>
+                            <th>Created By</th>
+                            <th>Created On</th>
+                            <th>Modified On</th>
+                            <th>Modified By</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="customers-tbody">
+                        <!-- Data will be populated via JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Context Menu - Same as table_data_display.html -->
+<div id="contextMenu" class="context-menu">
+    <div class="context-menu-item edit" onclick="editCustomerFromMenu()">
+        <i class="fas fa-edit"></i>
+        Edit Customer
+    </div>
+    <div class="context-menu-item delete" onclick="deleteCustomerFromMenu()">
+        <i class="fas fa-trash"></i>
+        Delete Customer
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadCustomers();
+    
+    // Add click event to Add Customer button
+    const addCustomerBtn = document.querySelector('.btn-add-customer');
+    if (addCustomerBtn) {
+        addCustomerBtn.addEventListener('click', function() {
+            window.location.href = '/api-admin/create-customer/';
+        });
+    }
+});
+
+let selectedCustomerId = null;
+let currentCustomerData = null;
+
+// Context menu functions - Same as table_data_display.html
+function showContextMenu(event) {
+    const contextMenu = document.getElementById('contextMenu');
+    const x = event.pageX;
+    const y = event.pageY;
+    
+    // Hide any existing context menu
+    hideContextMenu();
+    
+    // Position the context menu
+    contextMenu.style.left = x + 'px';
+    contextMenu.style.top = y + 'px';
+    contextMenu.style.display = 'block';
+    
+    // Close context menu when clicking elsewhere
+    setTimeout(() => {
+        document.addEventListener('click', hideContextMenu);
+    }, 0);
+}
+
+function hideContextMenu() {
+    const contextMenu = document.getElementById('contextMenu');
+    contextMenu.style.display = 'none';
+    document.removeEventListener('click', hideContextMenu);
+}
+
+function editCustomerFromMenu() {
+    hideContextMenu();
+    if (selectedCustomerId) {
+        window.location.href = `/api-admin/edit-customer/?id=${selectedCustomerId}`;
+    }
+}
+
+function deleteCustomerFromMenu() {
+    hideContextMenu();
+    if (selectedCustomerId) {
+        alert('Delete functionality not implemented yet.');
+    }
+}
+
+function formatDateTime(dateTimeString) {
+    if (!dateTimeString) return '-';
+    const date = new Date(dateTimeString);
+    return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
+}
+
+function loadCustomers() {
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const errorMessage = document.getElementById('error-message');
+    const errorText = document.getElementById('error-text');
+    const tableContainer = document.getElementById('customers-table-container');
+    const tbody = document.getElementById('customers-tbody');
+
+    // Show loading spinner
+    loadingSpinner.style.display = 'block';
+    errorMessage.classList.add('d-none');
+    tableContainer.style.display = 'none';
+
+    // Fetch data from API
+    fetch('/api-admin/api-customerslist/')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Hide loading spinner
+            loadingSpinner.style.display = 'none';
+
+            // Check if data exists
+            if (!data || data.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="14" class="text-center text-muted py-4">
+                            No customers found
+                        </td>
+                    </tr>
+                `;
+            } else {
+                // Populate table with data
+                tbody.innerHTML = '';
+                data.forEach(customer => {
+                    const row = document.createElement('tr');
+                    
+                    const activeStatus = customer.active 
+                        ? '<span class="badge bg-success">Active</span>' 
+                        : '<span class="badge bg-secondary">Inactive</span>';
+                    
+                    row.innerHTML = `
+                        <td>${customer.cust_id || '-'}</td>
+                        <td>${customer.name || '-'}</td>
+                        <td>${customer.street1 || '-'}</td>
+                        <td>${customer.street2 || '-'}</td>
+                        <td>${customer.city || '-'}</td>
+                        <td>${customer.region || '-'}</td>
+                        <td>${customer.country_name || '-'}</td>
+                        <td>${customer.phone || '-'}</td>
+                        <td>${customer.cust_db || '-'}</td>
+                        <td>${customer.created_by || '-'}</td>
+                        <td>${formatDateTime(customer.created_on)}</td>
+                        <td>${formatDateTime(customer.modified_on)}</td>
+                        <td>${customer.modified_by || '-'}</td>
+                        <td>${customer.active ? 'true' : 'false'}</td>
+                    `;
+                    
+                    // Add event listeners for double-click and right-click - Same as table_data_display.html
+                    row.addEventListener('dblclick', (e) => {
+                        e.preventDefault();
+                        currentCustomerData = customer;
+                        // Use the primary key id for routing/edit; keep both ids available
+                        selectedCustomerId = customer.id;
+                        showContextMenu(e);
+                    });
+                    
+                    row.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        currentCustomerData = customer;
+                        selectedCustomerId = customer.id;
+                        showContextMenu(e);
+                    });
+                    
+                    tbody.appendChild(row);
+                });
+            }
+
+            // Show table
+            tableContainer.style.display = 'block';
+        })
+        .catch(error => {
+            // Hide loading spinner
+            loadingSpinner.style.display = 'none';
+
+            // Show error message
+            errorText.textContent = 'Failed to load customers: ' + error.message;
+            errorMessage.classList.remove('d-none');
+            
+            console.error('Error loading customers:', error);
+        });
+}
+</script>
+{% endblock %}

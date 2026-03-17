@@ -1,0 +1,517 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Validation Rules Generator{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .page {
+        width: 100%;
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0.5rem;
+    }
+    
+    .form-container {
+        background: #fff;
+        border-radius: 8px;
+        border: 1px solid #e8eaf0;
+        padding: 0.5rem;
+    }
+    
+    .questions-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .category-section {
+        margin-bottom: 0.5rem;
+    }
+    
+    .category-section:last-child {
+        margin-bottom: 0;
+    }
+    
+    .category-header {
+        background: #f8f9fa;
+        padding: 0.4rem 0.6rem;
+        border-radius: 6px 6px 0 0;
+        border: 1px solid #e2e8f0;
+        border-bottom: 2px solid #667eea;
+        font-weight: 600;
+        color: #2d3748;
+        font-size: 0.85rem;
+    }
+    
+    .category-header.no-category {
+        background: #f0f0f0;
+        border-bottom-color: #9ca3af;
+    }
+    
+    .questions-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 0 0 6px 6px;
+        overflow: hidden;
+    }
+    
+    .questions-table thead {
+        background: #f8f9fa;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .questions-table th {
+        padding: 0.4rem 0.6rem;
+        text-align: left;
+        font-weight: 600;
+        color: #2d3748;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+    
+    .questions-table th:first-child {
+        width: 85%;
+    }
+    
+    .questions-table th:last-child {
+        width: 15%;
+        text-align: center;
+    }
+    
+    .questions-table tbody tr {
+        border-bottom: 1px solid #e2e8f0;
+        transition: background-color 0.15s ease;
+    }
+    
+    .questions-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .questions-table tbody tr:last-child {
+        border-bottom: none;
+    }
+    
+    .questions-table td {
+        padding: 0.4rem 0.6rem;
+        color: #4a5568;
+        font-size: 0.85rem;
+    }
+    
+    .questions-table td:first-child {
+        font-weight: 500;
+    }
+    
+    .questions-table td:last-child {
+        text-align: center;
+    }
+    
+    .selection-input {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+        accent-color: #667eea;
+    }
+    
+    .selection-input[type="radio"] {
+        cursor: pointer;
+    }
+    
+    .selection-input[type="checkbox"] {
+        cursor: pointer;
+    }
+    
+    .max-length-container {
+        margin-top: 0.5rem;
+        padding: 0.5rem;
+        background: #f8f9fa;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
+    }
+    
+    .max-length-container label {
+        display: block;
+        margin-bottom: 0.3rem;
+        font-weight: 600;
+        color: #2d3748;
+        font-size: 0.85rem;
+    }
+    
+    .max-length-input {
+        width: 100%;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        color: #2d3748;
+        transition: border-color 0.2s ease;
+    }
+    
+    .max-length-input:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    .form-actions {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.5rem;
+        padding-top: 0.4rem;
+        border-top: 1px solid #e2e8f0;
+    }
+    
+    .btn {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        border-radius: 6px;
+        border: none;
+        transition: all 0.2s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    
+    .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 14px rgba(102, 126, 234, 0.35);
+    }
+    
+    .btn-primary:disabled {
+        background: #cbd5e0;
+        cursor: not-allowed;
+        transform: none;
+    }
+    
+    .btn-secondary {
+        background: #fff;
+        color: #4a5568;
+        border: 1px solid #cbd5e0;
+    }
+    
+    .btn-secondary:hover {
+        background: #f3f4f6;
+        border-color: #9ca3af;
+    }
+    
+    .loading-container {
+        text-align: center;
+        padding: 1.5rem;
+    }
+    
+    .loading-spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        width: 36px;
+        height: 36px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 0.5rem;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    .message {
+        padding: 0.5rem;
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+        font-size: 0.8rem;
+    }
+    
+    .message.success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+    
+    .message.error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+    
+    .message.info {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="form-container">
+        <div id="messageBox"></div>
+        
+        <div id="loadingContainer" class="loading-container">
+            <div class="loading-spinner"></div>
+            <p>Loading questions...</p>
+        </div>
+        
+        <form id="validationForm" style="display: none;">
+            {% csrf_token %}
+            <div id="questionsContainer" class="questions-container">
+                <!-- Questions will be loaded here dynamically -->
+            </div>
+            
+            <div class="max-length-container">
+                <label for="maxLength">Maximum Length (optional):</label>
+                <input type="number" 
+                       id="maxLength" 
+                       name="maxLength" 
+                       class="max-length-input" 
+                       min="1" 
+                       placeholder="Enter maximum string length...">
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>
+                <button type="submit" class="btn btn-primary" id="submitBtn">
+                    Create
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    let questions = [];
+    
+    // Function to show messages
+    function showMessage(message, type) {
+        const messageBox = document.getElementById('messageBox');
+        messageBox.innerHTML = `<div class="message ${type}">${message}</div>`;
+        setTimeout(() => {
+            messageBox.innerHTML = '';
+        }, 5000);
+    }
+    
+    // Function to get CSRF token
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    
+    // Load questions from API
+    async function loadQuestions() {
+        try {
+            const response = await fetch('/api/api-validation-rules/');
+            
+            if (!response.ok) {
+                throw new Error('Failed to load questions');
+            }
+            
+            const data = await response.json();
+            questions = data.validation_rules || [];
+            
+            if (questions.length === 0) {
+                showMessage('No validation questions found. Please add questions in the admin panel.', 'error');
+                document.getElementById('loadingContainer').style.display = 'none';
+                return;
+            }
+            
+            renderQuestions();
+            document.getElementById('loadingContainer').style.display = 'none';
+            document.getElementById('validationForm').style.display = 'block';
+            
+        } catch (error) {
+            console.error('Error loading questions:', error);
+            showMessage('Error loading questions. Please try again later.', 'error');
+            document.getElementById('loadingContainer').style.display = 'none';
+        }
+    }
+    
+    // Render questions dynamically grouped by category
+    function renderQuestions() {
+        const container = document.getElementById('questionsContainer');
+        container.innerHTML = '';
+        
+        // Group questions by category
+        const questionsByCategory = {};
+        questions.forEach((rule) => {
+            const category = rule.category || 'No Category';
+            if (!questionsByCategory[category]) {
+                questionsByCategory[category] = [];
+            }
+            questionsByCategory[category].push(rule);
+        });
+        
+        // Sort categories: "first char" first, then "last char", then others alphabetically
+        const sortedCategories = Object.keys(questionsByCategory).sort((a, b) => {
+            const aLower = a.toLowerCase();
+            const bLower = b.toLowerCase();
+            if (aLower === 'first char') return -1;
+            if (bLower === 'first char') return 1;
+            if (aLower === 'last char') return -1;
+            if (bLower === 'last char') return 1;
+            return a.localeCompare(b);
+        });
+        
+        // Render each category as a separate table
+        sortedCategories.forEach((category) => {
+            const categorySection = document.createElement('div');
+            categorySection.className = 'category-section';
+            
+            const categoryHeader = document.createElement('div');
+            categoryHeader.className = `category-header ${category === 'No Category' ? 'no-category' : ''}`;
+            categoryHeader.textContent = category;
+            
+            const table = document.createElement('table');
+            table.className = 'questions-table';
+            
+            // Create table header
+            const thead = document.createElement('thead');
+            thead.innerHTML = `
+                <tr>
+                    <th>Question</th>
+                    <th>Select</th>
+                </tr>
+            `;
+            table.appendChild(thead);
+            
+            // Create table body
+            const tbody = document.createElement('tbody');
+            
+            questionsByCategory[category].forEach((rule) => {
+                const row = document.createElement('tr');
+                
+                // "first char" and "last char" categories use radio buttons (single selection)
+                // All other categories use checkboxes (multiple selection)
+                const categoryLower = category.toLowerCase();
+                const isFirstChar = categoryLower === 'first char';
+                const isLastChar = categoryLower === 'last char';
+                const isSingleSelection = isFirstChar || isLastChar;
+                const inputType = isSingleSelection ? 'radio' : 'checkbox';
+                let inputName;
+                if (isFirstChar) {
+                    inputName = `category_first_char`;
+                } else if (isLastChar) {
+                    inputName = `category_last_char`;
+                } else {
+                    inputName = `question_${rule.id}`;
+                }
+                const inputId = `question_${rule.id}`;
+                
+                row.innerHTML = `
+                    <td>${rule.question}</td>
+                    <td>
+                        <input type="${inputType}" 
+                               id="${inputId}" 
+                               name="${inputName}" 
+                               value="${rule.id}"
+                               class="selection-input">
+                    </td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+            
+            table.appendChild(tbody);
+            
+            categorySection.appendChild(categoryHeader);
+            categorySection.appendChild(table);
+            container.appendChild(categorySection);
+        });
+    }
+    
+    // Reset form
+    function resetForm() {
+        document.getElementById('validationForm').reset();
+    }
+    
+    // Handle form submission
+    document.getElementById('validationForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const submitBtn = document.getElementById('submitBtn');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating...';
+        
+        const selectedIds = [];
+        
+        // Get all checked inputs (both radio and checkbox)
+        const checkedInputs = document.querySelectorAll('.selection-input:checked');
+        checkedInputs.forEach((input) => {
+            selectedIds.push(parseInt(input.value));
+        });
+        
+        if (selectedIds.length === 0) {
+            showMessage('Please select at least one question.', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Create';
+            return;
+        }
+        
+        // Get max length value (optional)
+        const maxLengthInput = document.getElementById('maxLength');
+        const maxLength = maxLengthInput.value.trim() ? parseInt(maxLengthInput.value) : null;
+        
+        // Validate max length if provided
+        if (maxLength !== null && (isNaN(maxLength) || maxLength < 1)) {
+            showMessage('Maximum length must be a positive number.', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Create';
+            return;
+        }
+        
+        try {
+            const csrftoken = getCookie('csrftoken');
+            const requestBody = { selected_ids: selectedIds };
+            if (maxLength !== null) {
+                requestBody.max_length = maxLength;
+            }
+            
+            const response = await fetch('/api/api-validation-rules/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken,
+                },
+                body: JSON.stringify(requestBody)
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showMessage('Regular expression generated successfully! Check the terminal output.', 'success');
+            } else {
+                showMessage(data.error || 'Failed to generate regex', 'error');
+            }
+            
+        } catch (error) {
+            console.error('Error generating regex:', error);
+            showMessage('An error occurred. Please try again.', 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Create';
+        }
+    });
+    
+    // Load questions on page load
+    document.addEventListener('DOMContentLoaded', loadQuestions);
+</script>
+{% endblock %}
+

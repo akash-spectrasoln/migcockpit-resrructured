@@ -1,0 +1,307 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Add Source Connection{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .page {
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      display: grid;
+      gap: 1rem;
+    }
+    h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 1.5rem;
+      color: #1a1a1a;
+    }
+    form {
+      width: 100%;
+      display: grid;
+      gap: 1rem;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      border: 1px solid #e8eaf0;
+      box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06);
+    }
+    .form-group {
+      display: grid;
+      gap: 0.5rem;
+    }
+    label {
+      font-weight: 600;
+      color: #374151;
+      font-size: 0.9rem;
+    }
+    .required {
+      color: #dc2626;
+    }
+    input, select {
+      padding: 0.75rem;
+      font-size: 1rem;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    input:focus, select:focus {
+      border-color: #7f56d9;
+      box-shadow: 0 0 0 3px rgba(127, 86, 217, 0.15);
+    }
+    input[type="password"] {
+      font-family: monospace;
+    }
+    .help-text {
+      color: #6b7280;
+      font-size: 0.85rem;
+      margin-top: 0.25rem;
+    }
+    button {
+      padding: 0.875rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid #7f56d9;
+      background: #7f56d9;
+      color: #fff;
+      transition: all 0.2s ease;
+      margin-top: 0.5rem;
+    }
+    button:hover {
+      background: #6941c6;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(127, 86, 217, 0.3);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    button:disabled {
+      background: #9ca3af;
+      border-color: #9ca3af;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    #result {
+      margin-top: 1rem;
+      white-space: pre-wrap;
+      background: #fff;
+      border: 1px solid #e8eaf0;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.9rem;
+      min-height: 60px;
+    }
+    .error {
+      color: #dc2626;
+      background: #fef2f2;
+      border-color: #fecaca;
+    }
+    .success {
+      color: #059669;
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
+    .loading {
+      color: #6b7280;
+      background: #f9fafb;
+      border-color: #e5e7eb;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 640px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+
+{% block content %}
+  <div class="page">
+    <h1>Add Source Connection</h1>
+    <form id="source-form">
+      {% csrf_token %}
+      
+      <div class="form-group">
+        <label for="source_name">Source Name <span class="required">*</span></label>
+        <input id="source_name" name="source_name" type="text" required placeholder="e.g., Production Database" />
+        <div class="help-text">A descriptive name for this source connection</div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="hostname">Hostname</label>
+          <input id="hostname" name="hostname" type="text" placeholder="e.g., localhost or 192.168.1.100" />
+          <div class="help-text">Database server hostname or IP address</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="port">Port</label>
+          <input id="port" name="port" type="number" placeholder="e.g., 5432" />
+          <div class="help-text">Database port number</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="user">Username</label>
+          <input id="user" name="user" type="text" placeholder="Database username" />
+          <div class="help-text">Database username for authentication</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" placeholder="Database password" />
+          <div class="help-text">Database password for authentication</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="schema">Schema</label>
+        <input id="schema" name="schema" type="text" placeholder="e.g., public, dbo" />
+        <div class="help-text">Database schema name (optional)</div>
+      </div>
+
+      <button type="submit" id="submit-btn">Add Source Connection</button>
+    </form>
+    
+    <div id="result"></div>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    // Get CSRF token from cookie (Django pattern)
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    const form = document.getElementById('source-form');
+    const result = document.getElementById('result');
+    const submitBtn = document.getElementById('submit-btn');
+
+    // Form validation
+    function validateForm() {
+      const requiredFields = ['source_name'];
+      let isValid = true;
+      
+      requiredFields.forEach(fieldName => {
+        const field = document.getElementById(fieldName);
+        if (!field.value.trim()) {
+          field.style.borderColor = '#dc2626';
+          isValid = false;
+        } else {
+          field.style.borderColor = '#d0d5dd';
+        }
+      });
+      
+      return isValid;
+    }
+
+    // Real-time validation
+    document.querySelectorAll('input[required]').forEach(input => {
+      input.addEventListener('blur', validateForm);
+      input.addEventListener('input', function() {
+        if (this.value.trim()) {
+          this.style.borderColor = '#d0d5dd';
+        }
+      });
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      console.log('Form submission started');
+      
+      if (!validateForm()) {
+        console.log('Form validation failed');
+        result.className = 'error';
+        result.textContent = 'Please fill in all required fields.';
+        return;
+      }
+
+      console.log('Form validation passed');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Adding...';
+      result.className = 'loading';
+      result.textContent = 'Submitting source connection details...';
+
+      // Build payload
+      const payload = {
+        source_name: document.getElementById('source_name').value.trim(),
+        hostname: document.getElementById('hostname').value.trim() || null,
+        port: document.getElementById('port').value ? parseInt(document.getElementById('port').value) : null,
+        user: document.getElementById('user').value.trim() || null,
+        password: document.getElementById('password').value || null,
+        schema: document.getElementById('schema').value.trim() || null,
+      };
+
+      // Remove null values to keep JSON clean
+      Object.keys(payload).forEach(key => {
+        if (payload[key] === null || payload[key] === '') {
+          delete payload[key];
+        }
+      });
+
+      try {
+        console.log('Making fetch request to /api/sources-connection/');
+        const res = await fetch('/api/sources-connection/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken || '',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        let data;
+        try {
+          data = await res.json();
+        } catch (jsonError) {
+          console.error('Error parsing JSON response:', jsonError);
+          result.className = 'error';
+          result.textContent = ` Invalid response from server: ${jsonError.message}`;
+          return;
+        }
+        
+        if (res.ok) {
+          result.className = 'success';
+          result.textContent = ' Source connection added successfully!';
+          
+          // Reset form
+          form.reset();
+        } else {
+          result.className = 'error';
+          if (data && data.error) {
+            result.textContent = ` ${data.error}`;
+          } else {
+            result.textContent = ' Invalid credentials';
+          }
+        }
+      } catch (err) {
+        result.className = 'error';
+        result.textContent = ' Invalid credentials';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add Source Connection';
+      }
+    });
+
+    // Auto-focus first input
+    document.getElementById('source_name').focus();
+  </script>
+{% endblock %}

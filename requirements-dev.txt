@@ -1,0 +1,18 @@
+# Development tools — install with:
+#   pip install -r requirements-dev.txt
+#
+# These are NOT needed in production.
+
+# Linting & formatting
+ruff==0.3.4                  # fast linter (replaces flake8 + isort + pyupgrade)
+
+# Testing
+pytest==7.4.3
+pytest-django==4.7.0        # Django test runner integration
+pytest-cov==4.1.0           # coverage reporting
+pytest-mock==3.12.0         # mock fixtures
+
+# Type checking (optional but recommended)
+mypy==1.8.0
+django-stubs==4.2.7         # Django type stubs for mypy
+djangorestframework-stubs==3.14.5

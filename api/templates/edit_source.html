@@ -1,0 +1,581 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Edit Source Connection{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .page {
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      display: grid;
+      gap: 1rem;
+    }
+    h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 1.5rem;
+      color: #1a1a1a;
+    }
+    .customer-info {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #6b7280;
+      margin-bottom: 1rem;
+    }
+    form {
+      width: 100%;
+      display: grid;
+      gap: 1rem;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      border: 1px solid #e8eaf0;
+      box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06);
+    }
+    .form-group {
+      display: grid;
+      gap: 0.5rem;
+    }
+    label {
+      font-weight: 600;
+      color: #374151;
+      font-size: 0.9rem;
+    }
+    .required {
+      color: #dc2626;
+    }
+    input, select {
+      padding: 0.75rem;
+      font-size: 1rem;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    input:focus, select:focus {
+      border-color: #7f56d9;
+      box-shadow: 0 0 0 3px rgba(127, 86, 217, 0.15);
+    }
+    input[type="password"] {
+      font-family: monospace;
+    }
+    .help-text {
+      color: #6b7280;
+      font-size: 0.85rem;
+      margin-top: 0.25rem;
+    }
+    button {
+      padding: 0.875rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid;
+      transition: all 0.2s ease;
+      margin-top: 0.5rem;
+    }
+    .btn-primary {
+      background: #7f56d9;
+      border-color: #7f56d9;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #6941c6;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(127, 86, 217, 0.3);
+    }
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+    .btn-primary:disabled {
+      background: #9ca3af;
+      border-color: #9ca3af;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-secondary {
+      background: #fff;
+      border-color: #d1d5db;
+      color: #374151;
+    }
+    .btn-secondary:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+    }
+    #result {
+      margin-top: 1rem;
+      white-space: pre-wrap;
+      background: #fff;
+      border: 1px solid #e8eaf0;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.9rem;
+      min-height: 60px;
+    }
+    .error {
+      color: #dc2626;
+      background: #fef2f2;
+      border-color: #fecaca;
+    }
+    .success {
+      color: #059669;
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
+    .loading {
+      color: #6b7280;
+      background: #f9fafb;
+      border-color: #e5e7eb;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .status-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .toggle-switch {
+      position: relative;
+      width: 48px;
+      height: 24px;
+      background: #d1d5db;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .toggle-switch.active {
+      background: #7f56d9;
+    }
+    .toggle-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s ease;
+    }
+    .toggle-switch.active::after {
+      transform: translateX(24px);
+    }
+    .toggle-label {
+      font-size: 0.9rem;
+      color: #374151;
+    }
+    .password-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .password-container input {
+      padding-right: 3rem;
+    }
+    .password-toggle {
+      position: absolute;
+      right: 0.75rem;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.25rem;
+      border-radius: 4px;
+      transition: background-color 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+    }
+    .password-toggle:hover {
+      background-color: #f3f4f6;
+    }
+    .password-toggle:active {
+      background-color: #e5e7eb;
+    }
+    .password-toggle span {
+      font-size: 1rem;
+      user-select: none;
+    }
+    .eye-icon {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #6b7280;
+      border-radius: 50%;
+      position: relative;
+      transition: border-color 0.2s ease;
+    }
+    .eye-icon::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px;
+      height: 6px;
+      background: #6b7280;
+      border-radius: 50%;
+      transition: background-color 0.2s ease;
+    }
+    .eye-icon::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 8px;
+      height: 8px;
+      border: 2px solid transparent;
+      border-top-color: #6b7280;
+      border-right-color: #6b7280;
+      border-radius: 50%;
+      transform: rotate(-45deg);
+      transition: border-color 0.2s ease;
+    }
+    .password-toggle:hover .eye-icon {
+      border-color: #374151;
+    }
+    .password-toggle:hover .eye-icon::before {
+      background: #374151;
+    }
+    .password-toggle:hover .eye-icon::after {
+      border-top-color: #374151;
+      border-right-color: #374151;
+    }
+    .eye-icon.hidden::before {
+      display: none;
+    }
+    .eye-icon.hidden::after {
+      display: none;
+    }
+    .eye-icon.hidden {
+      border: 2px solid #6b7280;
+      background: #6b7280;
+      border-radius: 2px;
+      transform: rotate(45deg);
+    }
+    .eye-icon.hidden::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 2px;
+      height: 8px;
+      background: #fff;
+    }
+    @media (max-width: 640px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+
+
+{% block content %}
+  <div class="page">
+    <h1>Edit Source Connection</h1>
+    <div class="customer-info" id="customer-info">Loading...</div>
+    
+    <form id="edit-source-form">
+      {% csrf_token %}
+      
+      <div class="form-group">
+        <label for="source_name">Source Name <span class="required">*</span></label>
+        <input id="source_name" name="source_name" type="text" required placeholder="e.g., Production Database" />
+        <div class="help-text">A descriptive name for this source connection</div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="hostname">Hostname</label>
+          <input id="hostname" name="hostname" type="text" placeholder="e.g., localhost or 192.168.1.100" />
+          <div class="help-text">Database server hostname or IP address</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="port">Port</label>
+          <input id="port" name="port" type="number" placeholder="e.g., 5432" />
+          <div class="help-text">Database port number</div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="user">Username</label>
+          <input id="user" name="user" type="text" placeholder="Database username" />
+          <div class="help-text">Database username for authentication</div>
+        </div>
+        
+        <div class="form-group">
+          <label for="password">Password</label>
+          <div class="password-container">
+            <input id="password" name="password" type="password" placeholder="Database password" />
+            <button type="button" class="password-toggle" id="password-toggle" onclick="togglePasswordVisibility()">
+              <span id="password-toggle-icon" class="eye-icon"></span>
+            </button>
+          </div>
+          <div class="help-text">Database password for authentication</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="schema">Schema</label>
+        <input id="schema" name="schema" type="text" placeholder="e.g., public, dbo" />
+        <div class="help-text">Database schema name (optional)</div>
+      </div>
+
+      <div class="form-group">
+        <div class="status-toggle">
+          <div class="toggle-switch" id="status-toggle" onclick="toggleStatus()"></div>
+          <span class="toggle-label" id="status-label">Active</span>
+        </div>
+        <div class="help-text">Toggle to activate or deactivate this source connection</div>
+      </div>
+
+      <div class="form-row">
+        <button type="button" class="btn-secondary" onclick="goBack()">Cancel</button>
+        <button type="submit" class="btn-primary" id="submit-btn">Update Source Connection</button>
+      </div>
+    </form>
+    
+    <div id="result"></div>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    // Get CSRF token from cookie (Django pattern)
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    const form = document.getElementById('edit-source-form');
+    const result = document.getElementById('result');
+    const submitBtn = document.getElementById('submit-btn');
+    const customerInfo = document.getElementById('customer-info');
+    const statusToggle = document.getElementById('status-toggle');
+    const statusLabel = document.getElementById('status-label');
+
+    // Get customer ID and source name from Django context
+    const sourceId = '{{ source_id }}';
+    
+    // Validate that we have the required parameters
+    if ( !sourceId) {
+        result.className = 'error';
+        result.textContent = ' Missing source ID in context';
+        throw new Error('Missing or invalid source ID in context.');
+    }
+    
+    // Debug the constructed API URL
+    const apiUrl = `/api/api-customer/sources/${sourceId}/edit/`;
+
+    let currentSourceData = null;
+
+    function toggleStatus() {
+      const isActive = statusToggle.classList.contains('active');
+      statusToggle.classList.toggle('active');
+      statusLabel.textContent = isActive ? 'Inactive' : 'Active';
+    }
+
+    function togglePasswordVisibility() {
+      const passwordInput = document.getElementById('password');
+      const toggleIcon = document.getElementById('password-toggle-icon');
+      
+      if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        toggleIcon.classList.add('hidden');
+      } else {
+        passwordInput.type = 'password';
+        toggleIcon.classList.remove('hidden');
+      }
+    }
+
+    function goBack() {
+      window.history.back();
+    }
+
+    // Form validation
+    function validateForm() {
+      const requiredFields = ['source_name'];
+      let isValid = true;
+      
+      requiredFields.forEach(fieldName => {
+        const field = document.getElementById(fieldName);
+        if (!field.value.trim()) {
+          field.style.borderColor = '#dc2626';
+          isValid = false;
+        } else {
+          field.style.borderColor = '#d0d5dd';
+        }
+      });
+      
+      return isValid;
+    }
+
+    // Real-time validation
+    document.querySelectorAll('input[required]').forEach(input => {
+      input.addEventListener('blur', validateForm);
+      input.addEventListener('input', function() {
+        if (this.value.trim()) {
+          this.style.borderColor = '#d0d5dd';
+        }
+      });
+    });
+
+    async function loadSourceData() {
+      try {
+        result.className = 'loading';
+        result.textContent = 'Loading source details...';
+        console.log('Attempting to fetch from URL:', apiUrl);
+
+        // Get source data directly from the edit endpoint
+        const response = await fetch(apiUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Received data from API:', data);
+        
+        // Update customer info
+        customerInfo.textContent = `Customer: ${data.customer_name} (${data.customer_id})`;
+
+        const source = data.source;
+        currentSourceData = source;
+        console.log('Source data:', source);
+
+        // Populate form fields
+        console.log('Populating form fields...');
+        document.getElementById('source_name').value = source.source_name || 'none';
+        document.getElementById('hostname').value = source.hostname || '';
+        document.getElementById('port').value = source.port || '';
+        document.getElementById('user').value = source.user || '';
+        document.getElementById('password').value = source.password || '';
+        document.getElementById('schema').value = source.schema || '';
+        console.log('Form fields populated');
+
+        // Set status toggle
+        if (source.is_active) {
+          statusToggle.classList.add('active');
+          statusLabel.textContent = 'Active';
+        } else {
+          statusToggle.classList.remove('active');
+          statusLabel.textContent = 'Inactive';
+        }
+
+        result.textContent = '';
+
+      } catch (err) {
+        console.error('Error loading source data:', err);
+        result.className = 'error';
+        result.textContent = ` Failed to load source details: ${err.message}`;
+      }
+    }
+
+    // Handle form submission
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      console.log('Form submission started');
+      
+      if (!validateForm()) {
+        console.log('Form validation failed');
+        result.className = 'error';
+        result.textContent = ' Please fill in all required fields.';
+        return;
+      }
+
+      console.log('Form validation passed');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Updating...';
+      result.className = 'loading';
+      result.textContent = 'Updating source connection details...';
+
+      // Build payload
+      const payload = {
+        source_name: document.getElementById('source_name').value.trim(),
+        hostname: document.getElementById('hostname').value.trim() || null,
+        port: document.getElementById('port').value ? parseInt(document.getElementById('port').value) : null,
+        user: document.getElementById('user').value.trim() || null,
+        password: document.getElementById('password').value || null,
+        schema: document.getElementById('schema').value.trim() || null,
+        is_active: statusToggle.classList.contains('active')
+      };
+
+      // Remove null values to keep JSON clean
+      Object.keys(payload).forEach(key => {
+        if (payload[key] === null || payload[key] === '') {
+          delete payload[key];
+        }
+      });
+
+      console.log('Payload:', payload);
+      console.log('CSRF Token:', csrftoken);
+
+      try {
+        console.log('Making fetch request to:', apiUrl);
+        const res = await fetch(apiUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken || '',
+          },
+          body: JSON.stringify(payload),
+        });
+        
+        console.log('Response status:', res.status);
+        console.log('Response headers:', res.headers);
+
+        let data;
+        try {
+          data = await res.json();
+          console.log('Response data:', data);
+        } catch (jsonError) {
+          console.error('Error parsing JSON response:', jsonError);
+          result.className = 'error';
+          result.textContent = ` Invalid response from server: ${jsonError.message}`;
+          return;
+        }
+        
+        if (res.ok) {
+          result.className = 'success';
+          result.textContent = ' Source connection updated successfully!';
+          
+          // Optionally redirect back after a delay
+          setTimeout(() => {
+            window.location.href = `/api/customer/sources/`;
+          }, 2000);
+        } else {
+          result.className = 'error';
+          if (data && data.error) {
+            result.textContent = ` ${data.error}`;
+          } else {
+            result.textContent = ' Failed to update source connection';
+          }
+        }
+      } catch (err) {
+        result.className = 'error';
+        result.textContent = ' Failed to update source connection';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Update Source Connection';
+      }
+    });
+
+    // Load source data when page loads
+    document.addEventListener('DOMContentLoaded', loadSourceData);
+  </script>
+{% endblock %}

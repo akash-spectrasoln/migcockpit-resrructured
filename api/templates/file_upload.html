@@ -1,0 +1,667 @@
+{% extends "base/navbar.html" %}
+
+{% block title %}File Upload - Data Migration API{% endblock %}
+
+{% block extra_styles %}
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📁</text></svg>">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+        .upload-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .upload-area {
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            background-color: #f8f9fa;
+            transition: all 0.3s ease;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .preview-section {
+            display: none;
+            margin-top: 2rem;
+        }
+        .data-preview {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+        }
+        .loading {
+            display: none;
+        }
+        .alert {
+            margin-top: 1rem;
+        }
+        .table-structure {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .column-editor {
+            margin-bottom: 0.5rem;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        .step {
+            display: flex;
+            align-items: center;
+            margin: 0 1rem;
+        }
+        .step-number {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #6c757d;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 0.5rem;
+        }
+        .step.active .step-number {
+            background-color: #007bff;
+        }
+        .step.completed .step-number {
+            background-color: #28a745;
+        }
+        /* Table styling to match table_data_display.html exactly */
+        .table td {
+            vertical-align: middle;
+            font-size: 0.8em;
+            padding: 0.4rem;
+        }
+        .table th {
+            background-color: #343a40;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            font-size: 0.85em;
+            padding: 0.5rem;
+        }
+        .table {
+            font-size: 0.8em;
+        }
+        .table tbody tr {
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        .table tbody tr:hover {
+            background-color: #f8f9fa !important;
+        }
+        .table-responsive {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+</style>
+{% endblock %}
+
+{% block nav_links %}
+<li><a href="{% url 'customer_user_dashboard' %}">Dashboard</a></li>
+<li><a href="{% url 'file_upload' %}">File Upload</a></li>
+{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="upload-container">
+            <h2 class="text-center mb-4">File Upload</h2>
+            <p class="text-center text-muted mb-4">
+                Upload CSV or Excel files to view their contents and create database tables
+            </p>
+
+            <!-- Step Indicator -->
+            <div class="step-indicator">
+                <div class="step active" id="step1">
+                    <div class="step-number">1</div>
+                    <span>Upload File</span>
+                </div>
+                <div class="step" id="step2">
+                    <div class="step-number">2</div>
+                    <span>Review & Edit</span>
+                </div>
+                <div class="step" id="step3">
+                    <div class="step-number">3</div>
+                    <span>Create Table</span>
+                </div>
+            </div>
+
+            <!-- Step 1: File Upload -->
+            <div id="uploadStep">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt fa-2x text-muted mb-2"></i>
+                    </div>
+                    <h5>Drop files here or click to browse</h5>
+                    <p class="text-muted small">Supports CSV (.csv) and Excel (.xlsx) files</p>
+                    <div class="mb-2">
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="tableScope" id="scopeLocal" value="local" checked>
+                            <label class="form-check-label" for="scopeLocal">Local</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="tableScope" id="scopeGlobal" value="global">
+                            <label class="form-check-label" for="scopeGlobal">Global</label>
+                        </div>
+                    </div>
+                    <input type="file" id="fileInput" class="d-none" accept=".csv,.xlsx">
+                    <button type="button" class="btn btn-primary btn-sm" id="chooseFileBtn">
+                        Choose File
+                    </button>
+                    <button type="button" class="btn btn-success btn-sm ms-2" id="previewBtn" style="display: none;">
+                        Preview File
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 2: Preview and Edit -->
+            <div class="preview-section" id="previewStep">
+                <div class="row">
+                    <div class="col-12">
+                        <div class="mb-3">
+                            <label for="tableName" class="form-label">Table Name:</label>
+                            <input type="text" class="form-control" id="tableName" placeholder="Enter table name">
+                        </div>
+                        <h4>Data Preview with Column Types</h4>
+                        <div class="data-preview" id="dataPreview">
+                            <!-- Data preview with types will be populated here -->
+                        </div>
+                    </div>
+                </div>
+                <div class="text-center mt-3">
+                    <button type="button" class="btn btn-secondary me-2" id="backToUploadBtn">
+                        Back to Upload
+                    </button>
+                    <button type="button" class="btn btn-success" id="createTableBtn">
+                        Create Table in Database
+                    </button>
+                </div>
+            </div>
+
+            <div class="loading text-center mt-3">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2" id="loadingText">Processing file...</p>
+            </div>
+
+            <div id="alertContainer"></div>
+        </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
+<script>
+        // Global variables
+        let currentFile = null;
+        let tableStructure = null;
+        let sampleData = null;
+        let selectedScope = 'local';
+        let schemaFromUrl = null;
+
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get schema from URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            schemaFromUrl = urlParams.get('schema');
+            
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+            const chooseFileBtn = document.getElementById('chooseFileBtn');
+            const previewBtn = document.getElementById('previewBtn');
+            const backToUploadBtn = document.getElementById('backToUploadBtn');
+            const createTableBtn = document.getElementById('createTableBtn');
+            const loading = document.querySelector('.loading');
+            const alertContainer = document.getElementById('alertContainer');
+            const uploadStep = document.getElementById('uploadStep');
+            const previewStep = document.getElementById('previewStep');
+
+            // Check if all required elements exist
+            if (!uploadArea || !fileInput || !chooseFileBtn || !previewBtn || !loading || !alertContainer) {
+                console.error('Required DOM elements not found');
+                return;
+            }
+
+            // Scope selector handlers
+            document.querySelectorAll('input[name="tableScope"]').forEach(radio => {
+                radio.addEventListener('change', (e) => {
+                    selectedScope = e.target.value;
+                });
+            });
+
+            // Drag and drop functionality
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFileSelection(files[0]);
+                }
+            });
+
+            uploadArea.addEventListener('click', (e) => {
+                // Only trigger if clicking on the upload area itself, not on buttons
+                if (e.target === uploadArea || e.target.classList.contains('upload-icon') || e.target.tagName === 'I') {
+                    fileInput.click();
+                }
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFileSelection(e.target.files[0]);
+                }
+            });
+
+            // Button click handlers
+            chooseFileBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+
+            previewBtn.addEventListener('click', () => {
+                if (currentFile) {
+                    previewFile();
+                }
+            });
+
+            backToUploadBtn.addEventListener('click', () => {
+                showStep(1);
+            });
+
+            createTableBtn.addEventListener('click', () => {
+                createTable();
+            });
+
+
+            function handleFileSelection(file) {
+                // Validate file type
+                const allowedTypes = ['.csv', '.xlsx'];
+                const fileExtension = '.' + file.name.toLowerCase().split('.').pop();
+                
+                if (!allowedTypes.includes(fileExtension)) {
+                    showAlert('Please select a CSV (.csv) or Excel (.xlsx) file.', 'danger');
+                    return;
+                }
+                
+                currentFile = file;
+                previewBtn.style.display = 'inline-block';
+                showAlert(`File selected: ${file.name}`, 'info');
+            }
+
+            function previewFile() {
+                if (!currentFile) {
+                    showAlert('No file selected', 'danger');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', currentFile);
+
+                showLoading('Analyzing file structure...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch('{% url "file-upload-preview-api" %}', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        return response.json();
+                    } else {
+                        return response.text().then(text => {
+                            throw new Error('Server returned non-JSON response');
+                        });
+                    }
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        // Store the response data
+                        tableStructure = data.table_info;
+                        sampleData = data.sample_data;
+                        
+                        // Set table name with filename__ format
+                        const fileName = currentFile.name.split('.')[0]; // Remove extension
+                        const tableName = fileName + '__';
+                        document.getElementById('tableName').value = tableName;
+                        
+                        // Populate column editors
+                        populateColumnEditors();
+                        
+                        // Populate data preview
+                        populateDataPreview();
+                        
+                        // Show preview step
+                        showStep(2);
+                        showAlert(data.message, 'success');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Preview failed: ${error.message}`, 'danger');
+                });
+            }
+
+            function populateColumnEditors() {
+                // This function is no longer needed as we're using the integrated table view
+                // Column editing will be handled in the data preview table
+            }
+
+            function populateDataPreview() {
+                const dataPreview = document.getElementById('dataPreview');
+                
+                if (!sampleData || sampleData.length === 0) {
+                    dataPreview.innerHTML = '<p class="text-muted">No data to preview</p>';
+                    return;
+                }
+
+                // Create table structure similar to table_data_display.html
+                let tableHtml = '<div class="table-responsive">';
+                tableHtml += '<table class="table table-striped table-hover mb-0">';
+                
+                // Add headers row - exact styling from table_data_display.html
+                tableHtml += '<thead>';
+                tableHtml += '<tr>';
+                Object.keys(sampleData[0]).forEach(key => {
+                    tableHtml += `<th class="text-center" style="background-color: #343a40; color: white; position: sticky; top: 0; z-index: 10; font-size: 0.85em; padding: 0.5rem; white-space: nowrap; font-weight: normal;">${key}</th>`;
+                });
+                tableHtml += '</tr>';
+                tableHtml += '</thead>';
+                
+                // Add data types row as a separate header - matching table_data_display.html styling
+                tableHtml += '<thead style="background-color: #e3f2fd;">';
+                tableHtml += '<tr>';
+                Object.keys(sampleData[0]).forEach((key, index) => {
+                    const column = tableStructure.columns.find(col => col.original_name === key);
+                    const dataType = column ? column.postgresql_type : 'VARCHAR(50)';
+                    
+                    // Create dynamic options for VARCHAR types
+                    let varcharOptions = '';
+                    if (dataType.startsWith('VARCHAR(')) {
+                        // Extract the length from the detected type
+                        const detectedLength = dataType.match(/VARCHAR\((\d+)\)/)[1];
+                        varcharOptions = `<option value="${dataType}" selected>${dataType}</option>`;
+                        // Add other common VARCHAR sizes
+                        const commonSizes = [50, 100, 255, 500, 1000, 2000];
+                        commonSizes.forEach(size => {
+                            if (size != detectedLength) {
+                                varcharOptions += `<option value="VARCHAR(${size})">VARCHAR(${size})</option>`;
+                            }
+                        });
+                    } else {
+                        // For non-VARCHAR types, show all options
+                        varcharOptions = `
+                            <option value="VARCHAR(50)" ${dataType === 'VARCHAR(50)' ? 'selected' : ''}>VARCHAR(50)</option>
+                            <option value="VARCHAR(100)" ${dataType === 'VARCHAR(100)' ? 'selected' : ''}>VARCHAR(100)</option>
+                            <option value="VARCHAR(255)" ${dataType === 'VARCHAR(255)' ? 'selected' : ''}>VARCHAR(255)</option>
+                            <option value="VARCHAR(500)" ${dataType === 'VARCHAR(500)' ? 'selected' : ''}>VARCHAR(500)</option>
+                        `;
+                    }
+                    
+                    tableHtml += `<th class="text-center" style="font-size: 0.8em; padding: 0.4rem; font-weight: normal;">
+                        <select class="form-select form-select-sm column-type" data-index="${index}" style="min-width: 120px; font-size: 0.75em; padding: 0.25rem 0.5rem;">
+                            ${varcharOptions}
+                            <option value="INTEGER" ${dataType === 'INTEGER' ? 'selected' : ''}>INTEGER</option>
+                            <option value="BIGINT" ${dataType === 'BIGINT' ? 'selected' : ''}>BIGINT</option>
+                            <option value="REAL" ${dataType === 'REAL' ? 'selected' : ''}>REAL</option>
+                            <option value="DECIMAL(10,2)" ${dataType === 'DECIMAL(10,2)' ? 'selected' : ''}>DECIMAL(10,2)</option>
+                            <option value="DATE" ${dataType === 'DATE' ? 'selected' : ''}>DATE</option>
+                            <option value="TIMESTAMP" ${dataType === 'TIMESTAMP' ? 'selected' : ''}>TIMESTAMP</option>
+                            <option value="TEXT" ${dataType === 'TEXT' ? 'selected' : ''}>TEXT</option>
+                        </select>
+                    </th>`;
+                });
+                tableHtml += '</tr>';
+                tableHtml += '</thead>';
+                
+                // Add data rows - exact styling from table_data_display.html
+                tableHtml += '<tbody>';
+                sampleData.forEach((row, rowIndex) => {
+                    tableHtml += '<tr style="cursor: pointer; transition: background-color 0.2s ease;">';
+                    Object.values(row).forEach(value => {
+                        const displayValue = value === null || value === undefined ? '' : String(value);
+                        // Exact same text handling as table_data_display.html
+                        let cellContent = '';
+                        if (displayValue.length > 30) {
+                            cellContent = `<span title="${displayValue}">${displayValue.substring(0, 30)}...</span>`;
+                        } else {
+                            cellContent = displayValue;
+                        }
+                        tableHtml += `<td style="vertical-align: middle; font-size: 0.8em; padding: 0.4rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cellContent}</td>`;
+                    });
+                    tableHtml += '</tr>';
+                });
+                tableHtml += '</tbody>';
+                tableHtml += '</table>';
+                tableHtml += '</div>';
+                
+                dataPreview.innerHTML = tableHtml;
+            }
+
+            function createTable() {
+                if (!currentFile || !tableStructure) {
+                    showAlert('No file or table structure available', 'danger');
+                    return;
+                }
+
+                // Collect updated column information from the new table format
+                const updatedColumns = [];
+                const columnTypes = document.querySelectorAll('.column-type');
+                const columnHeaders = Object.keys(sampleData[0]);
+
+                for (let i = 0; i < columnHeaders.length; i++) {
+                    const originalColumn = tableStructure.columns.find(col => col.original_name === columnHeaders[i]);
+                    updatedColumns.push({
+                        original_name: columnHeaders[i],
+                        column_name: columnHeaders[i].toLowerCase().replace(/[^a-z0-9]/g, '_'),
+                        postgresql_type: columnTypes[i].value
+                    });
+                }
+
+                const tableName = document.getElementById('tableName').value;
+                if (!tableName.trim()) {
+                    showAlert('Please enter a table name', 'danger');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', currentFile);
+                formData.append('table_name', tableName);
+                formData.append('columns', JSON.stringify(updatedColumns));
+                formData.append('scope', selectedScope);
+                formData.append('schema', schemaFromUrl);
+
+                showLoading('Creating table and inserting data...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch('{% url "write-table-api" %}', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        return response.json();
+                    } else {
+                        return response.text().then(text => {
+                            throw new Error('Server returned non-JSON response');
+                        });
+                    }
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        showStep(3);
+                        showAlert(data.message, 'success');
+                        
+                        // Reset form
+                        setTimeout(() => {
+                            resetForm();
+                        }, 3000);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Table creation failed: ${error.message}`, 'danger');
+                });
+            }
+
+            function showStep(stepNumber) {
+                // Update step indicators
+                document.querySelectorAll('.step').forEach((step, index) => {
+                    step.classList.remove('active', 'completed');
+                    if (index + 1 < stepNumber) {
+                        step.classList.add('completed');
+                    } else if (index + 1 === stepNumber) {
+                        step.classList.add('active');
+                    }
+                });
+
+                // Show/hide sections
+                if (stepNumber === 1) {
+                    uploadStep.style.display = 'block';
+                    previewStep.style.display = 'none';
+                } else if (stepNumber === 2) {
+                    uploadStep.style.display = 'none';
+                    previewStep.style.display = 'block';
+                } else if (stepNumber === 3) {
+                    uploadStep.style.display = 'none';
+                    previewStep.style.display = 'block';
+                }
+            }
+
+            function resetForm() {
+                currentFile = null;
+                tableStructure = null;
+                sampleData = null;
+                selectedScope = 'local';
+                fileInput.value = '';
+                previewBtn.style.display = 'none';
+                document.getElementById('tableName').value = '';
+                document.getElementById('dataPreview').innerHTML = '';
+                showStep(1);
+                clearAlerts();
+            }
+
+            function showLoading(text = 'Processing...') {
+                document.getElementById('loadingText').textContent = text;
+                loading.style.display = 'block';
+            }
+
+            function hideLoading() {
+                loading.style.display = 'none';
+            }
+
+            function showAlert(message, type) {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+                alertDiv.innerHTML = `
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                alertContainer.appendChild(alertDiv);
+            }
+
+            function clearAlerts() {
+                alertContainer.innerHTML = '';
+            }
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+        });
+</script>
+{% endblock %}

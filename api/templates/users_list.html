@@ -1,0 +1,542 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Users List{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .users-container {
+        max-width: 100%;
+        margin: 0 auto;
+        padding: 10px 20px;
+    }
+    
+    .user-card {
+        border: 2px solid #dee2e6;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    #users-table {
+        border: none;
+        border-collapse: separate;
+        border-spacing: 0;
+        border-radius: 8px;
+        overflow: hidden;
+        min-width: 1200px;
+        margin-bottom: 0;
+        background-color: white;
+    }
+    
+    #users-table thead th {
+        border: none;
+        text-align: left;
+        vertical-align: middle;
+        padding: 8px 12px;
+        white-space: nowrap;
+        font-size: 0.9rem;
+        font-weight: 600;
+        position: sticky;
+        top: 0;
+        background-color: #2a2e31;
+        color: white;
+        z-index: 10;
+        line-height: 1.1;
+    }
+    
+    #users-table thead th:first-child {
+        border-top-left-radius: 8px;
+    }
+    
+    #users-table thead th:last-child {
+        border-top-right-radius: 8px;
+    }
+    
+    #users-table tbody td {
+        border: none;
+        border-bottom: 1px solid #e9ecef;
+        text-align: left;
+        vertical-align: middle;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+        line-height: 1.1;
+    }
+    
+    #users-table tbody tr {
+        background-color: white;
+    }
+    
+    #users-table tbody tr:nth-child(even) {
+        background-color: #f8f9fa;
+    }
+    
+    #users-table tbody tr:hover {
+        background-color: #e9ecef;
+    }
+    
+    .header-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-top: 5px;
+    }
+    
+    .btn-add-user {
+        margin: 0;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .users-container {
+            padding: 10px;
+        }
+        
+        #users-table {
+            font-size: 0.75rem;
+        }
+        
+        #users-table thead th {
+            padding: 8px 6px;
+            font-size: 0.8rem;
+        }
+        
+        #users-table tbody td {
+            padding: 8px 6px;
+            font-size: 0.75rem;
+        }
+    }
+    
+     .text-truncate-custom {
+         max-width: 150px;
+         overflow: hidden;
+         text-overflow: ellipsis;
+         white-space: nowrap;
+         display: inline-block;
+     }
+     
+     .action-buttons {
+         display: flex;
+         gap: 4px;
+         align-items: center;
+     }
+     
+     .action-btn {
+         padding: 4px 8px;
+         font-size: 0.75rem;
+         border-radius: 4px;
+         border: 1px solid;
+         cursor: pointer;
+         transition: all 0.2s ease;
+         text-decoration: none;
+         display: inline-flex;
+         align-items: center;
+         justify-content: center;
+         min-width: 28px;
+         height: 28px;
+     }
+     
+     .action-btn.edit-btn {
+         background-color: transparent;
+         border-color: #0d6efd;
+         color: #0d6efd;
+     }
+     
+     .action-btn.edit-btn:hover {
+         background-color: #0d6efd;
+         color: white;
+     }
+     
+     .action-btn.delete-btn {
+         background-color: transparent;
+         border-color: #dc3545;
+         color: #dc3545;
+     }
+     
+     .action-btn.delete-btn:hover {
+         background-color: #dc3545;
+         color: white;
+     }
+     
+     .action-btn i {
+         font-size: 12px;
+     }
+     
+     .add-user-btn {
+         padding: 0.5rem 1rem;
+         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+         color: white;
+         border: none;
+         border-radius: 6px;
+         font-weight: 600;
+         font-size: 0.9rem;
+         cursor: pointer;
+         transition: all 0.3s ease;
+         text-decoration: none;
+         display: inline-flex;
+         align-items: center;
+         gap: 0.5rem;
+     }
+     
+     .add-user-btn:hover {
+         transform: translateY(-2px);
+         box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+     }
+     
+     .loading-spinner {
+         text-align: center;
+         padding: 2rem;
+         color: #6b7280;
+     }
+     
+     .spinner {
+         width: 40px;
+         height: 40px;
+         border: 4px solid #f3f4f6;
+         border-top: 4px solid #667eea;
+         border-radius: 50%;
+         animation: spin 1s linear infinite;
+         margin: 0 auto 1rem;
+     }
+     
+     @keyframes spin {
+         0% { transform: rotate(0deg); }
+         100% { transform: rotate(360deg); }
+     }
+     
+     .error-message {
+         background-color: #fed7d7;
+         color: #c53030;
+         border: 1px solid #fc8181;
+         padding: 1rem;
+         border-radius: 8px;
+         margin: 1rem;
+         display: flex;
+         align-items: center;
+         gap: 0.5rem;
+     }
+     
+     .status-badge {
+         display: inline-block;
+         padding: 0.25rem 0.75rem;
+         border-radius: 9999px;
+         font-size: 0.75rem;
+         font-weight: 500;
+         text-transform: uppercase;
+         letter-spacing: 0.05em;
+     }
+     
+     .status-active {
+         background-color: #d1fae5;
+         color: #065f46;
+     }
+     
+     .status-inactive {
+         background-color: #fee2e2;
+         color: #991b1b;
+     }
+     
+     /* Custom Confirmation Modal */
+     .modal-overlay {
+         position: fixed;
+         top: 0;
+         left: 0;
+         width: 100%;
+         height: 100%;
+         background-color: rgba(0, 0, 0, 0.5);
+         display: flex;
+         justify-content: center;
+         align-items: center;
+         z-index: 1000;
+     }
+     
+     .modal-content {
+         background: white;
+         border-radius: 12px;
+         padding: 2rem;
+         max-width: 400px;
+         width: 90%;
+         box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+         text-align: center;
+     }
+     
+     .modal-title {
+         font-size: 1.25rem;
+         font-weight: 600;
+         color: #1f2937;
+         margin-bottom: 1rem;
+     }
+     
+     .modal-message {
+         color: #6b7280;
+         margin-bottom: 2rem;
+         line-height: 1.5;
+     }
+     
+     .modal-buttons {
+         display: flex;
+         gap: 1rem;
+         justify-content: center;
+     }
+     
+     .modal-btn {
+         padding: 0.75rem 1.5rem;
+         border: none;
+         border-radius: 8px;
+         font-weight: 600;
+         font-size: 0.9rem;
+         cursor: pointer;
+         transition: all 0.2s ease;
+         min-width: 100px;
+     }
+     
+     .modal-btn-cancel {
+         background-color: #f3f4f6;
+         color: #374151;
+         border: 1px solid #d1d5db;
+     }
+     
+     .modal-btn-cancel:hover {
+         background-color: #e5e7eb;
+     }
+     
+     .modal-btn-confirm {
+         background-color: #dc2626;
+         color: white;
+     }
+     
+     .modal-btn-confirm:hover {
+         background-color: #b91c1c;
+     }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="users-container">
+    <div class="header-section">
+        <h2 class="mb-3">Users List</h2>
+        <button class="add-user-btn">
+            + Add User
+        </button>
+    </div>
+
+    <div class="card user-card">
+        <div class="card-body">
+            <div id="loading-spinner" class="loading-spinner">
+                <div class="spinner"></div>
+                <p>Loading users...</p>
+            </div>
+
+            <div id="error-message" class="error-message" style="display: none;">
+                <span>⚠️</span>
+                <span id="error-text"></span>
+            </div>
+
+            <div class="table-responsive" id="users-table-container" style="display: none;">
+                <table class="table" id="users-table">
+                     <thead>
+                         <tr>
+                             <th>Name</th>
+                             <th>Email</th>
+                             <th>Status</th>
+                             <th>Created By</th>
+                             <th>Actions</th>
+                         </tr>
+                     </thead>
+                    <tbody id="users-tbody">
+                        <!-- Data will be populated via JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Custom Confirmation Modal -->
+<div id="confirmationModal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-title">Confirm Delete</div>
+        <div class="modal-message">Are you sure you want to delete this user? This action cannot be undone.</div>
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
+            <button class="modal-btn modal-btn-confirm" onclick="confirmDelete()">Delete</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadUsers();
+    
+    // Add click event to Add User button
+    const addUserBtn = document.querySelector('.add-user-btn');
+    if (addUserBtn) {
+        addUserBtn.addEventListener('click', function() {
+            window.location.href = '{% url "create_user" %}';
+        });
+    }
+});
+
+function loadUsers() {
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const errorMessage = document.getElementById('error-message');
+    const errorText = document.getElementById('error-text');
+    const tableContainer = document.getElementById('users-table-container');
+    const tbody = document.getElementById('users-tbody');
+
+    // Show loading spinner
+    loadingSpinner.style.display = 'block';
+    errorMessage.style.display = 'none';
+    tableContainer.style.display = 'none';
+
+    // Fetch data from API
+    fetch('/api/api-list-users/')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Hide loading spinner
+            loadingSpinner.style.display = 'none';
+
+             // Check if data exists
+             if (!data || data.length === 0) {
+                 tbody.innerHTML = `
+                     <tr>
+                         <td colspan="5" class="text-center text-muted py-4">
+                             No users found
+                         </td>
+                     </tr>
+                 `;
+             } else {
+                 // Populate table with data
+                 tbody.innerHTML = '';
+                 data.forEach(user => {
+                     const row = document.createElement('tr');
+                     
+                     const name = user.first_name && user.last_name 
+                         ? `${user.first_name} ${user.last_name}` 
+                         : user.email || '-';
+                     
+                    const activeStatus = user.is_active 
+                        ? '<span class="status-badge status-active">Active</span>' 
+                        : '<span class="status-badge status-inactive">Inactive</span>';
+                     
+                     row.innerHTML = `
+                         <td>${name}</td>
+                         <td>${user.email || '-'}</td>
+                         <td>${activeStatus}</td>
+                         <td>${user.created_by || '-'}</td>
+                         <td>
+                             <div class="action-buttons">
+                                 <button type="button" class="action-btn edit-btn" onclick="editUser(${user.id})" title="Edit User">
+                                     EDIT
+                                 </button>
+                                 <button type="button" class="action-btn delete-btn" onclick="deleteUser(${user.id})" title="Delete User">
+                                     DELETE
+                                 </button>
+                             </div>
+                         </td>
+                     `;
+                     
+                     tbody.appendChild(row);
+                 });
+             }
+
+            // Show table
+            tableContainer.style.display = 'block';
+        })
+        .catch(error => {
+            // Hide loading spinner
+            loadingSpinner.style.display = 'none';
+
+            // Show error message
+            errorText.textContent = 'Failed to load users: ' + error.message;
+            errorMessage.style.display = 'flex';
+            
+            console.error('Error loading users:', error);
+         });
+ }
+
+ function editUser(userId) {
+     // Redirect to edit user page
+     window.location.href = `/api/user-update/${userId}/`;
+ }
+
+ let userIdToDelete = null;
+
+ function deleteUser(userId) {
+     userIdToDelete = userId;
+     document.getElementById('confirmationModal').style.display = 'flex';
+ }
+
+ function closeModal() {
+     document.getElementById('confirmationModal').style.display = 'none';
+     userIdToDelete = null;
+ }
+
+ // Close modal when clicking outside of it
+ document.addEventListener('click', function(event) {
+     const modal = document.getElementById('confirmationModal');
+     if (event.target === modal) {
+         closeModal();
+     }
+ });
+
+ function confirmDelete() {
+     if (userIdToDelete) {
+         // Make delete request
+         fetch(`/api/api-delete-user/${userIdToDelete}/`, {
+             method: 'DELETE',
+             headers: {
+                 'Content-Type': 'application/json',
+                 'X-CSRFToken': getCookie('csrftoken')
+             }
+         })
+         .then(response => {
+             if (response.ok) {
+                 // Close modal and reload the users list
+                 closeModal();
+                 loadUsers();
+             } else {
+                 // Close modal and reload (no error message shown)
+                 closeModal();
+                 loadUsers();
+             }
+         })
+         .catch(error => {
+             console.error('Error deleting user:', error);
+             // Close modal and reload (no error message shown)
+             closeModal();
+             loadUsers();
+         });
+     }
+ }
+
+ function getCookie(name) {
+     let cookieValue = null;
+     if (document.cookie && document.cookie !== '') {
+         const cookies = document.cookie.split(';');
+         for (let i = 0; i < cookies.length; i++) {
+             const cookie = cookies[i].trim();
+             if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                 cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                 break;
+             }
+         }
+     }
+     return cookieValue;
+ }
+ </script>
+ {% endblock %}

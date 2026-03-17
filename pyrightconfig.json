@@ -1,0 +1,16 @@
+{
+  "pythonVersion": "3.9",
+  "pythonPlatform": "Windows",
+  "venvPath": "",
+  "extraPaths": [
+    ".",
+    "./services/extraction_service"
+  ],
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none",
+  "reportGeneralTypeIssues": "warning",
+  "reportOptionalMemberAccess": "warning",
+  "reportOptionalSubscript": "warning",
+  "reportOptionalCall": "warning",
+  "typeCheckingMode": "off"
+}

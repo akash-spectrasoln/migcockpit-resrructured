@@ -1,0 +1,271 @@
+{% extends "base/admin_nav.html" %}
+
+{% block content %}
+<style>
+    .users-container {
+        max-width: 100%;
+        margin: 0 auto;
+        padding: 10px 20px;
+    }
+    
+    .user-card {
+        border: 2px solid #dee2e6;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    #users-table {
+        border: none;
+        border-collapse: separate;
+        border-spacing: 0;
+        border-radius: 8px;
+        overflow: hidden;
+        min-width: 1200px;
+        margin-bottom: 0;
+        background-color: white;
+    }
+    
+    #users-table thead th {
+        border: none;
+        text-align: left;
+        vertical-align: middle;
+        padding: 8px 12px;
+        white-space: nowrap;
+        font-size: 0.9rem;
+        font-weight: 600;
+        position: sticky;
+        top: 0;
+        background-color: #2a2e31;
+        color: white;
+        z-index: 10;
+        line-height: 1.1;
+    }
+    
+    #users-table thead th:first-child {
+        border-top-left-radius: 8px;
+    }
+    
+    #users-table thead th:last-child {
+        border-top-right-radius: 8px;
+    }
+    
+    #users-table tbody td {
+        border: none;
+        border-bottom: 1px solid #e9ecef;
+        text-align: left;
+        vertical-align: middle;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+        line-height: 1.1;
+    }
+    
+    #users-table tbody tr {
+        background-color: white;
+    }
+    
+    #users-table tbody tr:nth-child(even) {
+        background-color: #f8f9fa;
+    }
+    
+    #users-table tbody tr:hover {
+        background-color: #e9ecef;
+    }
+    
+    .header-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-top: 5px;
+    }
+    
+    .btn-add-user {
+        margin: 0;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .users-container {
+            padding: 10px;
+        }
+        
+        #users-table {
+            font-size: 0.75rem;
+        }
+        
+        #users-table thead th {
+            padding: 8px 6px;
+            font-size: 0.8rem;
+        }
+        
+        #users-table tbody td {
+            padding: 8px 6px;
+            font-size: 0.75rem;
+        }
+    }
+    
+    .text-truncate-custom {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: inline-block;
+    }
+</style>
+
+<div class="users-container">
+    <div class="header-section">
+        <h2 class="mb-3">Users List</h2>
+        <button class="btn btn-primary btn-add-user">
+            <i class="fas fa-plus me-2"></i>Add User
+        </button>
+    </div>
+
+    <div class="card user-card">
+        <div class="card-body">
+            <div id="loading-spinner" class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2 text-muted">Loading users...</p>
+            </div>
+
+            <div id="error-message" class="alert alert-danger d-none" role="alert">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <span id="error-text"></span>
+            </div>
+
+            <div class="table-responsive" id="users-table-container" style="display: none;">
+                <table class="table" id="users-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>First Name</th>
+                            <th>Last Name</th>
+                            <th>Customer ID</th>
+                            <th>Created By</th>
+                            <th>Created On</th>
+                            <th>Modified On</th>
+                            <th>Modified By</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody">
+                        <!-- Data will be populated via JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadUsers();
+    
+    // Add click event to Add User button
+    const addUserBtn = document.querySelector('.btn-add-user');
+    if (addUserBtn) {
+        addUserBtn.addEventListener('click', function() {
+            window.location.href = '/api-admin/create-user/';
+        });
+    }
+});
+
+function formatDateTime(dateTimeString) {
+    if (!dateTimeString) return '-';
+    const date = new Date(dateTimeString);
+    return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
+}
+
+function loadUsers() {
+    const loadingSpinner = document.getElementById('loading-spinner');
+    const errorMessage = document.getElementById('error-message');
+    const errorText = document.getElementById('error-text');
+    const tableContainer = document.getElementById('users-table-container');
+    const tbody = document.getElementById('users-tbody');
+
+    // Show loading spinner
+    loadingSpinner.style.display = 'block';
+    errorMessage.classList.add('d-none');
+    tableContainer.style.display = 'none';
+
+    // Fetch data from API
+    fetch('/api-admin/api-userslist/')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Hide loading spinner
+            loadingSpinner.style.display = 'none';
+
+            // Check if data exists
+            if (!data || data.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">
+                            No users found
+                        </td>
+                    </tr>
+                `;
+            } else {
+                // Populate table with data
+                tbody.innerHTML = '';
+                data.forEach(user => {
+                    const row = document.createElement('tr');
+                    
+                    const activeStatus = user.is_active 
+                        ? '<span class="badge bg-success">Active</span>' 
+                        : '<span class="badge bg-secondary">Inactive</span>';
+                    
+                    row.innerHTML = `
+                        <td>${user.email || '-'}</td>
+                        <td>${user.first_name || '-'}</td>
+                        <td>${user.last_name || '-'}</td>
+                        <td>${user.cust_id || '-'}</td>
+                        <td>${user.created_by || '-'}</td>
+                        <td>${formatDateTime(user.created_on)}</td>
+                        <td>${formatDateTime(user.modified_on)}</td>
+                        <td>${user.modified_by || '-'}</td>
+                        <td>${activeStatus}</td>
+                    `;
+                    
+                    tbody.appendChild(row);
+                });
+            }
+
+            // Show table
+            tableContainer.style.display = 'block';
+        })
+        .catch(error => {
+            // Hide loading spinner
+            loadingSpinner.style.display = 'none';
+
+            // Show error message
+            errorText.textContent = 'Failed to load users: ' + error.message;
+            errorMessage.classList.remove('d-none');
+            
+            console.error('Error loading users:', error);
+        });
+}
+</script>
+{% endblock %}
+

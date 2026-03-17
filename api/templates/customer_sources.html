@@ -1,0 +1,392 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Customer Sources{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .page {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      gap: 1.5rem;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fff;
+      padding: 1.5rem;
+      border-radius: 12px;
+      border: 1px solid #e8eaf0;
+      box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06);
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .back-btn {
+      padding: 0.5rem 1rem;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      color: #374151;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .back-btn:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      color: #1a1a1a;
+    }
+    .customer-info {
+      font-size: 0.9rem;
+      color: #6b7280;
+    }
+    .add-source-btn {
+      padding: 0.75rem 1.5rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid #7f56d9;
+      background: #7f56d9;
+      color: #fff;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .add-source-btn:hover {
+      background: #6941c6;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(127, 86, 217, 0.3);
+    }
+    .table-container {
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #e8eaf0;
+      box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06);
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      background: #f8fafc;
+      padding: 1rem;
+      text-align: left;
+      font-weight: 600;
+      color: #374151;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: 0.9rem;
+    }
+    td {
+      padding: 1rem;
+      border-bottom: 1px solid #f3f4f6;
+      color: #1f2937;
+    }
+    tr:hover {
+      background: #f9fafb;
+    }
+    .source-name {
+      font-weight: 500;
+    }
+    .status-active {
+      color: #059669;
+      font-weight: 500;
+    }
+    .status-inactive {
+      color: #dc2626;
+      font-weight: 500;
+    }
+    .created-date {
+      color: #6b7280;
+      font-size: 0.85rem;
+    }
+    .password-field {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      color: #6b7280;
+      font-size: 0.85rem;
+    }
+    .edit-btn {
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      color: #374151;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      display: inline-block;
+      margin-right: 0.5rem;
+    }
+    .edit-btn:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+      transform: translateY(-1px);
+    }
+    .delete-btn {
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #dc2626;
+      background: #fff;
+      color: #dc2626;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .delete-btn:hover {
+      background: #fef2f2;
+      border-color: #b91c1c;
+      transform: translateY(-1px);
+    }
+    .loading {
+      text-align: center;
+      padding: 2rem;
+      color: #6b7280;
+    }
+    .error {
+      text-align: center;
+      padding: 2rem;
+      color: #dc2626;
+      background: #fef2f2;
+      border-radius: 8px;
+      margin: 1rem;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 3rem;
+      color: #6b7280;
+    }
+    .empty-state h3 {
+      margin: 0 0 0.5rem 0;
+      color: #374151;
+    }
+    .empty-state p {
+      margin: 0;
+    }
+    @media (max-width: 768px) {
+      .page {
+        padding: 1rem;
+      }
+      .header {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+      }
+      .header-left {
+        flex-direction: column;
+        text-align: center;
+      }
+      table {
+        font-size: 0.85rem;
+      }
+      th, td {
+        padding: 0.75rem 0.5rem;
+      }
+    }
+  </style>
+{% endblock %}
+
+
+{% block content %}
+  <div class="page">
+    <div class="header">
+      <div class="header-left">
+        <div>
+          <h1 id="customer-name">Customer Sources</h1>
+          <div class="customer-info" id="customer-info">Loading...</div>
+        </div>
+      </div>
+      <a href="/api/add-source/" class="add-source-btn">Add New Source</a>
+    </div>
+    
+    <div class="table-container">
+      <div id="loading" class="loading">Loading sources...</div>
+      <div id="error" class="error" style="display: none;"></div>
+      <div id="empty-state" class="empty-state" style="display: none;">
+        <h3>No sources found</h3>
+        <p>This customer doesn't have any source connections yet.</p>
+      </div>
+      
+      <table id="sources-table" style="display: none;">
+        <thead>
+          <tr>
+            <th>Source Name</th>
+            <th>Hostname</th>
+            <th>Port</th>
+            <th>Username</th>
+            <th>Schema</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="sources-tbody">
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    // Get CSRF token from cookie (Django pattern)
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    const loading = document.getElementById('loading');
+    const error = document.getElementById('error');
+    const emptyState = document.getElementById('empty-state');
+    const table = document.getElementById('sources-table');
+    const tbody = document.getElementById('sources-tbody');
+    const customerName = document.getElementById('customer-name');
+    const customerInfo = document.getElementById('customer-info');
+
+    // Get customer ID from URL
+    const pathParts = window.location.pathname.split('/');
+    // URL structure: /api/customer/{id}/sources/
+    // pathParts: ['', 'api', 'customer', '{id}', 'sources', '']
+    let actualCustomerId = pathParts[3]; // Get the ID at index 3 (after 'api', 'customer')
+    console.log('Path parts:', pathParts);
+    console.log('Extracted customer ID:', actualCustomerId);
+    
+    // Fallback: if customer ID is not found, try to get it from the URL parameter
+    if (!actualCustomerId || actualCustomerId === 'sources') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const fallbackId = urlParams.get('customer_id') || 'C00001'; // Default fallback
+      console.log('Using fallback customer ID:', fallbackId);
+      actualCustomerId = fallbackId;
+    }
+
+    async function loadCustomerSources() {
+      try {
+        loading.style.display = 'block';
+        error.style.display = 'none';
+        emptyState.style.display = 'none';
+        table.style.display = 'none';
+
+        const apiUrl = `/api/api-customer/sources/`;
+        
+        const response = await fetch(apiUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken || '',
+          },
+        });
+
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
+        console.log('Response URL:', response.url);
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Response data:', data);
+        
+        loading.style.display = 'none';
+
+        // Update customer info
+        customerName.textContent = `${data.customer_name} - Sources`;
+        customerInfo.textContent = `Customer ID: ${data.customer_id}`;
+
+        if (data.sources.length === 0) {
+          emptyState.style.display = 'block';
+          return;
+        }
+
+        // Populate table
+        tbody.innerHTML = '';
+        data.sources.forEach(source => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td><span class="source-name">${source.source_name}</span></td>
+            <td>${source.hostname || '-'}</td>
+            <td>${source.port || '-'}</td>
+            <td>${source.user || '-'}</td>
+            <td>${source.schema || '-'}</td>
+            <td>
+              <span class="${source.is_active ? 'status-active' : 'status-inactive'}">
+                ${source.is_active ? 'Active' : 'Inactive'}
+              </span>
+            </td>
+            <td>
+              <span class="created-date">${new Date(source.created_on).toLocaleDateString()}</span>
+            </td>
+            <td>
+              <a href="/api/customer/sources/${encodeURIComponent(source.source_id)}/edit/" class="edit-btn">
+                Edit
+              </a>
+              <button class="delete-btn" onclick="deleteSource('${source.source_id}')">
+                Delete
+              </button>
+            </td>
+          `;
+          tbody.appendChild(row);
+        });
+
+        table.style.display = 'table';
+
+      } catch (err) {
+        console.error('Error loading sources:', err);
+        loading.style.display = 'none';
+        error.style.display = 'block';
+        error.textContent = `Failed to load sources: ${err.message}`;
+      }
+    }
+
+    async function deleteSource(sourceId) {
+      if (!confirm(`Are you sure you want to delete the source? This action cannot be undone.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/api-customer/sources/${encodeURIComponent(sourceId)}/delete/`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken || '',
+          },
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+
+        // Reload the sources list after successful deletion
+        await loadCustomerSources();
+        
+        // Show success message
+        alert('Source deleted successfully!');
+        
+      } catch (err) {
+        console.error('Error deleting source:', err);
+        alert(`Failed to delete source: ${err.message}`);
+      }
+    }
+
+    // Load sources when page loads
+    document.addEventListener('DOMContentLoaded', loadCustomerSources);
+  </script>
+{% endblock %}

@@ -1,0 +1,138 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .dashboard-header {
+        margin-bottom: 2rem;
+    }
+
+    .dashboard-header h1 {
+        font-size: 2rem;
+        color: #2d3748;
+        margin-bottom: 0.5rem;
+    }
+
+    .dashboard-header p {
+        color: #718096;
+        font-size: 1rem;
+    }
+
+    .action-cards {
+        display: flex;
+        gap: 1rem;
+        margin-top: 2rem;
+    }
+
+    .action-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 8px;
+        padding: 1rem 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+        border: none;
+        text-decoration: none;
+        display: inline-block;
+    }
+
+    .action-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+
+    .action-card.source-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .action-card.destination-card {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+
+    .action-card.user-card {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+
+    .action-card.project-card {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    }
+
+    .action-icon {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 0.5rem;
+        background-color: rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        color: white;
+    }
+
+    .action-card h3 {
+        color: white;
+        font-size: 1rem;
+        margin-bottom: 0.25rem;
+        font-weight: 600;
+    }
+
+    .action-card p {
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 0.8rem;
+        margin: 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content-wrapper">
+    <div class="dashboard-header">
+        <h1>Welcome to Data Migration Dashboard</h1>
+        <p>Manage your data sources and destinations efficiently</p>
+    </div>
+
+    <div class="action-cards">
+        <a href="{% url 'customer_sources' %}" class="action-card source-card" style="text-decoration: none;">
+            <div class="action-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 24px; height: 24px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                </svg>
+            </div>
+            <h3>Sources</h3>
+        </a>
+
+        <a href="{% url 'customer_destinations' %}" class="action-card destination-card" style="text-decoration: none;">
+            <div class="action-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 24px; height: 24px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+            </div>
+            <h3>Destinations</h3>
+        </a>
+
+        <a href="{% url 'users_list' %}" class="action-card user-card" style="text-decoration: none;">
+            <div class="action-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 24px; height: 24px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+            </div>
+            <h3>Users</h3>
+        </a>
+
+        <a href="{% url 'projects_list' %}" class="action-card project-card" style="text-decoration: none;">
+            <div class="action-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 24px; height: 24px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+            </div>
+            <h3>Projects</h3>
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% endblock %}

@@ -1,0 +1,477 @@
+{% extends 'base/navbar.html' %}
+
+{% block title %}Add Destination Connection{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .container {
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+    .content-wrapper {
+        margin-top: 0;
+        padding-top: 0;
+    }
+    .page {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+        display: grid;
+        gap: 1rem;
+    }
+    h1 {
+        margin: 0;
+        text-align: center;
+        font-size: 1.5rem;
+        color: #1a1a1a;
+    }
+    .subtitle {
+        text-align: center;
+        font-size: 0.9rem;
+        color: #6b7280;
+        margin-bottom: 1rem;
+    }
+    form {
+        width: 100%;
+        display: grid;
+        gap: 1.5rem;
+        background: #fff;
+        padding: 2rem;
+        border-radius: 12px;
+        border: 1px solid #e8eaf0;
+        box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06);
+    }
+    .form-group {
+        display: grid;
+        gap: 0.5rem;
+    }
+    label {
+        font-weight: 600;
+        color: #374151;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    .required {
+        color: #dc2626;
+    }
+    .info-icon {
+        width: 16px;
+        height: 16px;
+        background: #6b7280;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 10px;
+        font-weight: bold;
+        cursor: help;
+    }
+    input[type="text"], input[type="number"], select, textarea {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input[type="text"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .radio-group {
+        display: grid;
+        gap: 0.75rem;
+    }
+    .radio-option {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .radio-option:hover {
+        background: #f9fafb;
+        border-color: #d1d5db;
+    }
+    .radio-option.selected {
+        background: #eff6ff;
+        border-color: #3b82f6;
+    }
+    .radio-option input[type="radio"] {
+        margin: 0;
+        width: auto;
+    }
+    .nested-options {
+        margin-left: 1.5rem;
+        margin-top: 0.5rem;
+        display: grid;
+        gap: 0.5rem;
+    }
+    .nested-option {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .nested-option:hover {
+        background: #f9fafb;
+        border-color: #d1d5db;
+    }
+    .nested-option.selected {
+        background: #eff6ff;
+        border-color: #3b82f6;
+    }
+    .nested-option input[type="radio"] {
+        margin: 0;
+        width: auto;
+    }
+    .nested-input {
+        margin-left: 1.5rem;
+        margin-top: 0.5rem;
+    }
+    .nested-input input {
+        width: 200px;
+    }
+    .button-group {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 1rem;
+    }
+    .help-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #f3f4f6;
+        border: 1px solid #d1d5db;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        font-size: 14px;
+        color: #6b7280;
+    }
+    .nav-buttons {
+        display: flex;
+        gap: 0.5rem;
+    }
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: none;
+    }
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .btn-back {
+        background: #f3f4f6;
+        color: #374151;
+        border: 1px solid #d1d5db;
+    }
+    .btn-back:hover:not(:disabled) {
+        background: #e5e7eb;
+    }
+    .btn-next, .btn-finish {
+        background: #3b82f6;
+        color: white;
+    }
+    .btn-next:hover:not(:disabled), .btn-finish:hover:not(:disabled) {
+        background: #2563eb;
+    }
+    .btn-cancel {
+        background: #f3f4f6;
+        color: #374151;
+        border: 1px solid #d1d5db;
+    }
+    .btn-cancel:hover {
+        background: #e5e7eb;
+    }
+    .hidden {
+        display: none;
+    }
+    .message {
+        padding: 1rem;
+        border-radius: 6px;
+        margin-top: 1rem;
+        font-weight: 500;
+    }
+    .message.success {
+        background: #d1fae5;
+        color: #065f46;
+        border: 1px solid #a7f3d0;
+    }
+    .message.error {
+        background: #fee2e2;
+        color: #991b1b;
+        border: 1px solid #fca5a5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page">
+    <!-- Message display area -->
+    <div id="messageArea"></div>
+    
+    <form id="destinationForm">
+
+      <div class="form-group">
+        <label for="destination_name">Destination Name <span class="required">*</span></label>
+        <input type="text" id="destination_name" name="destination_name" required>
+      </div>
+
+      <div class="form-group">
+        <label for="hostname">Host Name <span class="required">*</span> <span class="info-icon" title="Enter the hostname or IP address of the destination system">i</span></label>
+        <input type="text" id="hostname" name="hostname" required>
+      </div>
+
+      <div class="form-group">
+        <label for="instance_number">Instance Number <span class="required">*</span></label>
+        <input type="number" id="instance_number" name="instance_number" required>
+      </div>
+
+      <div class="form-group">
+        <label>Mode <span class="required">*</span></label>
+        <div class="radio-group">
+          <div class="radio-option" onclick="selectMode('single_container')">
+            <input type="radio" id="single_container" name="mode" value="single_container">
+            <label for="single_container">Single container</label>
+          </div>
+          <div class="radio-option" onclick="selectMode('multiple_containers')">
+            <input type="radio" id="multiple_containers" name="mode" value="multiple_containers">
+            <label for="multiple_containers">Multiple containers</label>
+          </div>
+        </div>
+      </div>
+
+      <div id="databaseTypeSection" class="form-group hidden">
+        <label>Database Type <span class="required">*</span></label>
+        <div class="radio-group">
+          <div class="radio-option" onclick="selectDatabaseType('tenant_database')">
+            <input type="radio" id="tenant_database" name="database_type" value="tenant_database">
+            <label for="tenant_database">Tenant database</label>
+          </div>
+          <div class="radio-option" onclick="selectDatabaseType('system_database')">
+            <input type="radio" id="system_database" name="database_type" value="system_database">
+            <label for="system_database">System database</label>
+          </div>
+        </div>
+      </div>
+
+      <div id="tenantDbSection" class="form-group hidden">
+        <div class="nested-input">
+          <label for="tenant_db_name">Name <span class="required">*</span></label>
+          <input type="text" id="tenant_db_name" name="tenant_db_name">
+        </div>
+      </div>
+
+      <div id="systemDbSection" class="form-group hidden">
+        <div class="nested-input">
+          <label for="system_db_name">Name <span class="required">*</span></label>
+          <input type="text" id="system_db_name" name="system_db_name">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="destination_schema_name">Destination Schema Name <span class="required">*</span></label>
+        <input type="text" id="destination_schema_name" name="destination_schema_name" required>
+      </div>
+
+      <div class="form-group">
+        <label for="s4_schema_name">S4 Schema Name <span class="required">*</span></label>
+        <input type="text" id="s4_schema_name" name="s4_schema_name" required>
+      </div>
+
+      <div class="form-group">
+        <label for="description">Description</label>
+        <textarea id="description" name="description" rows="3" placeholder="Enter description (optional)"></textarea>
+      </div>
+
+      <div class="button-group">
+        <button type="button" class="help-btn" title="Help">?</button>
+        <div class="nav-buttons">
+          <button type="button" class="btn btn-cancel" onclick="cancelForm()">Cancel</button>
+          <button type="button" class="btn btn-finish" onclick="submitForm()">Add</button>
+        </div>
+      </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+
+    function selectMode(mode) {
+      // Update radio button selection
+      document.querySelectorAll('input[name="mode"]').forEach(radio => {
+        radio.checked = false;
+        radio.closest('.radio-option').classList.remove('selected');
+      });
+      document.getElementById(mode).checked = true;
+      document.getElementById(mode).closest('.radio-option').classList.add('selected');
+
+      // Show/hide database type section
+      const databaseTypeSection = document.getElementById('databaseTypeSection');
+      if (mode === 'multiple_containers') {
+        databaseTypeSection.classList.remove('hidden');
+      } else {
+        databaseTypeSection.classList.add('hidden');
+        // Hide all nested sections
+        document.getElementById('tenantDbSection').classList.add('hidden');
+        document.getElementById('systemDbSection').classList.add('hidden');
+        // Clear database type selection
+        document.querySelectorAll('input[name="database_type"]').forEach(radio => {
+          radio.checked = false;
+          radio.closest('.radio-option').classList.remove('selected');
+        });
+      }
+    }
+
+    function selectDatabaseType(databaseType) {
+      // Update radio button selection
+      document.querySelectorAll('input[name="database_type"]').forEach(radio => {
+        radio.checked = false;
+        radio.closest('.radio-option').classList.remove('selected');
+      });
+      document.getElementById(databaseType).checked = true;
+      document.getElementById(databaseType).closest('.radio-option').classList.add('selected');
+
+      // Show/hide appropriate name input
+      const tenantDbSection = document.getElementById('tenantDbSection');
+      const systemDbSection = document.getElementById('systemDbSection');
+      
+      if (databaseType === 'tenant_database') {
+        tenantDbSection.classList.remove('hidden');
+        systemDbSection.classList.add('hidden');
+      } else if (databaseType === 'system_database') {
+        systemDbSection.classList.remove('hidden');
+        tenantDbSection.classList.add('hidden');
+      }
+    }
+
+
+    function showMessage(message, type) {
+      const messageArea = document.getElementById('messageArea');
+      messageArea.innerHTML = `<div class="message ${type}">${message}</div>`;
+      
+      // Auto-hide success messages after 5 seconds
+      if (type === 'success') {
+        setTimeout(() => {
+          messageArea.innerHTML = '';
+        }, 5000);
+      }
+    }
+
+    function cancelForm() {
+      if (confirm('Are you sure you want to cancel? All entered data will be lost.')) {
+        window.location.href = '/customers-list/';
+      }
+    }
+
+    function submitForm() {
+      const form = document.getElementById('destinationForm');
+      const formData = new FormData(form);
+      
+      // Clear any existing messages
+      document.getElementById('messageArea').innerHTML = '';
+
+      // Validate required fields
+      const requiredFields = ['destination_name', 'hostname', 'instance_number', 'mode', 'destination_schema_name', 's4_schema_name'];
+      for (const field of requiredFields) {
+        if (!formData.get(field)) {
+          showMessage(`Please fill in the ${field.replace('_', ' ')} field.`, 'error');
+          return;
+        }
+      }
+
+      // Validate mode-specific fields
+      const mode = formData.get('mode');
+      if (mode === 'multiple_containers') {
+        const databaseType = formData.get('database_type');
+        if (!databaseType) {
+          showMessage('Please select a database type.', 'error');
+          return;
+        }
+        if (databaseType === 'tenant_database' && !formData.get('tenant_db_name')) {
+          showMessage('Please enter the tenant database name.', 'error');
+          return;
+        }
+        if (databaseType === 'system_database' && !formData.get('system_db_name')) {
+          showMessage('Please enter the system database name.', 'error');
+          return;
+        }
+      }
+
+      // Prepare data for API
+      const data = {
+        destination_name: formData.get('destination_name'),
+        hostname: formData.get('hostname'),
+        instance_number: parseInt(formData.get('instance_number')),
+        mode: formData.get('mode'),
+        destination_schema_name: formData.get('destination_schema_name'),
+        s4_schema_name: formData.get('s4_schema_name'),
+        description: formData.get('description') || ''
+      };
+
+      // Add mode-specific fields
+      if (mode === 'multiple_containers') {
+        data.database_type = formData.get('database_type');
+        if (data.database_type === 'tenant_database') {
+          data.tenant_db_name = formData.get('tenant_db_name');
+        } else if (data.database_type === 'system_database') {
+          data.system_db_name = formData.get('system_db_name');
+        }
+      }
+
+      // Submit to API
+      fetch('/api/destinations-connection/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.error) {
+          showMessage('Error: ' + data.error, 'error');
+        } else {
+          showMessage('Destination connection created successfully!', 'success');
+          // Reset form after successful submission
+          document.getElementById('destinationForm').reset();
+          // Clear any selected radio button states
+          document.querySelectorAll('.radio-option').forEach(option => {
+            option.classList.remove('selected');
+          });
+          document.querySelectorAll('.nested-option').forEach(option => {
+            option.classList.remove('selected');
+          });
+          // Hide conditional sections
+          document.getElementById('databaseTypeSection').classList.add('hidden');
+          document.getElementById('tenantDbSection').classList.add('hidden');
+          document.getElementById('systemDbSection').classList.add('hidden');
+        }
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        showMessage('An error occurred while creating the destination connection.', 'error');
+      });
+    }
+</script>
+{% endblock %}

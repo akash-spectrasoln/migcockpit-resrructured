@@ -1,0 +1,403 @@
+{% extends 'base/admin_nav.html' %}
+
+{% block title %}Create Customer{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .container {
+        padding: 0.75rem 2rem;
+    }
+
+    .content-wrapper {
+        margin-top: 0.5rem;
+    }
+
+    .form-header {
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 1rem;
+    }
+
+    .form-header h1 {
+        font-size: 1.5rem;
+        color: #2d3748;
+        margin-bottom: 0.25rem;
+    }
+
+    .form-header p {
+        color: #718096;
+        font-size: 0.85rem;
+    }
+
+    .customer-form {
+        max-width: 100%;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .form-row-2 {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-group.full-width {
+        grid-column: 1 / -1;
+    }
+
+    .form-group label {
+        font-weight: 600;
+        color: #2d3748;
+        margin-bottom: 0.35rem;
+        font-size: 0.8rem;
+        display: flex;
+        align-items: center;
+    }
+
+    .form-group label .required {
+        color: #e53e3e;
+        margin-left: 0.25rem;
+    }
+
+    .form-group input,
+    .form-group select {
+        padding: 0.35rem 0.5rem;
+        border: 1.5px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        transition: all 0.2s ease;
+        background-color: white;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .form-group input::placeholder {
+        color: #a0aec0;
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        margin-top: 1rem;
+        padding-top: 0.75rem;
+        border-top: 2px solid #e2e8f0;
+    }
+
+    .btn {
+        padding: 0.4rem 1.5rem;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+
+    .btn-secondary {
+        background-color: #e2e8f0;
+        color: #2d3748;
+    }
+
+    .btn-secondary:hover {
+        background-color: #cbd5e0;
+    }
+
+    .alert {
+        padding: 0.6rem 0.85rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+        font-size: 0.8rem;
+    }
+
+    .alert-error {
+        background-color: #fed7d7;
+        color: #c53030;
+        border: 1px solid #fc8181;
+    }
+
+    .alert-success {
+        background-color: #c6f6d5;
+        color: #22543d;
+        border: 1px solid #68d391;
+    }
+
+    .checkbox-wrapper {
+        display: flex;
+        align-items: center;
+        margin-top: 0.5rem;
+    }
+
+    .checkbox-wrapper input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin-right: 0.5rem;
+        cursor: pointer;
+    }
+
+    .checkbox-wrapper label {
+        margin-bottom: 0;
+        cursor: pointer;
+        font-weight: 500;
+    }
+
+    @media (max-width: 1024px) {
+        .form-row {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (max-width: 768px) {
+        .form-row,
+        .form-row-2 {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content-wrapper">
+    <div class="form-header">
+        <h1>Create New Customer & User</h1>
+        <p>Fill in the information below to register a new customer and associated user</p>
+    </div>
+
+    <div id="alertContainer"></div>
+
+    <form class="customer-form" id="customerForm">
+        <div style="margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #cbd5e0;">
+            <h2 style="font-size: 1.1rem; color: #4a5568; margin: 0;">Customer Information</h2>
+        </div>
+        
+        <!-- Row 1: Basic Info -->
+        <div class="form-row-2">
+            <div class="form-group">
+                <label for="name">Customer Name<span class="required">*</span></label>
+                <input type="text" id="name" name="name" placeholder="Enter customer name" required>
+            </div>
+            <div class="form-group">
+                <label for="phone">Phone<span class="required">*</span></label>
+                <input type="tel" id="phone" name="phone" placeholder="Enter phone number" required>
+            </div>
+        </div>
+
+        <!-- Row 2: Address Info -->
+        <div class="form-row">
+            <div class="form-group">
+                <label for="street1">Street 1<span class="required">*</span></label>
+                <input type="text" id="street1" name="street1" placeholder="Enter street address" required>
+            </div>
+            <div class="form-group">
+                <label for="street2">Street 2</label>
+                <input type="text" id="street2" name="street2" placeholder="Enter additional address">
+            </div>
+            <div class="form-group">
+                <label for="city">City<span class="required">*</span></label>
+                <input type="text" id="city" name="city" placeholder="Enter city" required>
+            </div>
+        </div>
+
+        <!-- Row 3: Region and Country -->
+        <div class="form-row-2">
+            <div class="form-group">
+                <label for="region">Region<span class="required">*</span></label>
+                <input type="text" id="region" name="region" placeholder="Enter region/state" required>
+            </div>
+            <div class="form-group">
+                <label for="country">Country<span class="required">*</span></label>
+                <select id="country" name="country" required>
+                    <option value="">Select a country</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Row 4: Status -->
+        <div class="form-row">
+            <div class="form-group">
+                <label>Customer Status</label>
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="active" name="active" checked>
+                    <label for="active">Active</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- User Information Section -->
+        <div style="margin-top: 1.5rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #cbd5e0;">
+            <h2 style="font-size: 1.1rem; color: #4a5568; margin: 0;">User Information</h2>
+        </div>
+
+        <!-- Row 5: User Basic Info -->
+        <div class="form-row">
+            <div class="form-group">
+                <label for="email">Email<span class="required">*</span></label>
+                <input type="email" id="email" name="email" placeholder="Enter email address" required>
+            </div>
+            <div class="form-group">
+                <label for="first_name">First Name<span class="required">*</span></label>
+                <input type="text" id="first_name" name="first_name" placeholder="Enter first name" required>
+            </div>
+            <div class="form-group">
+                <label for="last_name">Last Name<span class="required">*</span></label>
+                <input type="text" id="last_name" name="last_name" placeholder="Enter last name" required>
+            </div>
+        </div>
+
+        <!-- Row 6: User Status -->
+        <div class="form-row">
+            <div class="form-group">
+                <label>User Status</label>
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="user_active" name="user_active" checked>
+                    <label for="user_active">Active</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="window.history.back()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create Customer & User</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Fetch countries on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        fetchCountries();
+    });
+
+    async function fetchCountries() {
+        try {
+            const response = await fetch('/api-admin/countries/');
+            const data = await response.json();
+            
+            const countrySelect = document.getElementById('country');
+            data.forEach(country => {
+                const option = document.createElement('option');
+                option.value = country.id;
+                option.textContent = country.name;
+                countrySelect.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Error fetching countries:', error);
+            showAlert('Failed to load countries. Please refresh the page.', 'error');
+        }
+    }
+
+    document.getElementById('customerForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const formData = {
+            customer: {
+                name: document.getElementById('name').value,
+                phone: document.getElementById('phone').value,
+                street1: document.getElementById('street1').value,
+                street2: document.getElementById('street2').value || null,
+                city: document.getElementById('city').value,
+                region: document.getElementById('region').value,
+                country: parseInt(document.getElementById('country').value),
+                active: document.getElementById('active').checked
+            },
+            user: {
+                email: document.getElementById('email').value,
+                first_name: document.getElementById('first_name').value,
+                last_name: document.getElementById('last_name').value,
+                is_active: document.getElementById('user_active').checked
+            }
+        };
+
+        try {
+            const response = await fetch('/api-admin/customer-create/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                showAlert(data.message || 'Customer and user created successfully!', 'success');
+                // Reset form
+                document.getElementById('customerForm').reset();
+                // Optionally redirect after a delay
+                setTimeout(() => {
+                    window.location.href = '/api-admin/admin-dashboard/';
+                }, 2000);
+            } else {
+                const errorMessage = formatErrors(data);
+                showAlert(errorMessage, 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showAlert('An error occurred while creating the customer and user. Please try again.', 'error');
+        }
+    });
+
+    function formatErrors(data) {
+        if (typeof data === 'string') {
+            return data;
+        }
+        if (data.error) {
+            return data.error;
+        }
+        if (data.errors) {
+            return Object.entries(data.errors)
+                .map(([field, errors]) => `${field}: ${Array.isArray(errors) ? errors.join(', ') : errors}`)
+                .join('\n');
+        }
+        return Object.entries(data)
+            .map(([field, errors]) => `${field}: ${Array.isArray(errors) ? errors.join(', ') : errors}`)
+            .join('\n');
+    }
+
+    function showAlert(message, type) {
+        const alertContainer = document.getElementById('alertContainer');
+        const alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+        
+        alertContainer.innerHTML = `
+            <div class="alert ${alertClass}">
+                ${message}
+            </div>
+        `;
+
+        // Auto-hide alert after 5 seconds
+        setTimeout(() => {
+            alertContainer.innerHTML = '';
+        }, 5000);
+    }
+</script>
+{% endblock %}
+

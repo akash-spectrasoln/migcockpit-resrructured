@@ -1,0 +1,189 @@
+# Data Migration API Tests
+
+### Get Countries List
+GET http://127.0.0.1:8000/api/countries/
+Content-Type: application/json
+
+
+### Create Customer (Admin Endpoint)
+POST http://localhost:8000/api-admin/customer-create/
+Content-Type: application/json
+
+{
+    "name": "Jane Smith",
+    "street1": "456 Oak Avenue",
+    "street2": "",  
+    "city": "Los Angeles",
+    "region": "CA",
+    "country": 1,
+    "phone": "+1987654321",
+    "created_by": "admin",
+    "active": true
+}
+
+### Create User (Admin Endpoint)
+POST http://localhost:8000/api-admin/api-create-user/
+Content-Type: application/json
+
+{
+    "email": "john.doe@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "cust_id": "C00001",
+    "created_by": "admin"
+}
+
+### Get Sources List
+GET http://localhost:8000/api/sources/
+Content-Type: application/json
+
+### Test Source Connection - Valid Request
+POST http://localhost:8000/api/sources-connection/
+Content-Type: application/json
+
+{
+    "logged_in_user": "3",
+    "source_name": "Test Database",
+    "hostname": "localhost",
+    "port": 5432,
+    "user": "testuser",
+    "password": "testpassword"
+
+}
+
+###
+GET http://localhost:8000/api/api-customer/C00001/sources/
+
+
+### Test Source Edit API - Sql Server db
+GET http://localhost:8000/api/api-customer/C00001/sources/Sql%20Server%20db/edit/
+Content-Type: application/json
+
+###
+GET http://127.0.0.1:8000/api/customer/C00001/sources/Sql%20Server%20db/edit/
+
+### Test Destination Connection - Single Container
+POST http://localhost:8000/api/destinations-connection/
+Content-Type: application/json
+
+{
+    "customer": "C00001",
+    "destination_name": "Single Container Destination",
+    "hostname": "destination.example.com",
+    "instance_number": 1,
+    "mode": "single_container"
+}
+
+### Test Destination Connection - Multiple Containers with Tenant Database
+POST http://localhost:8000/api/destinations-connection/
+Content-Type: application/json
+
+{
+    "customer": "C00001",
+    "destination_name": "Multiple Containers - Tenant DB",
+    "hostname": "tenant.example.com",
+    "instance_number": 2,
+    "mode": "multiple_containers",
+    "database_type": "tenant_database",
+    "tenant_db_name": "tenant_db_001"
+}
+
+### Test Destination Connection - Multiple Containers with System Database
+POST http://localhost:8000/api/destinations-connection/
+Content-Type: application/json
+
+{
+    "customer": "C00001",
+    "destination_name": "Multiple Containers - System DB",
+    "hostname": "system.example.com",
+    "instance_number": 3,
+    "mode": "multiple_containers",
+    "database_type": "system_database",
+    "system_db_name": "system_db_001"
+}
+
+### Test File Upload Preview (with Primary Key)
+POST http://localhost:8000/api/file-upload-preview/
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="test_data.csv"
+Content-Type: text/csv
+
+name,email,phone
+John Doe,john@example.com,1234567890
+Jane Smith,jane@example.com,0987654321
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="user_id"
+
+admin@example.com
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Test File Upload Create Table (with Primary Key)
+POST http://localhost:8000/api/write-table/
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="test_data.csv"
+Content-Type: text/csv
+
+name,email,phone
+John Doe,john@example.com,1234567890
+Jane Smith,jane@example.com,0987654321
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="user_id"
+
+admin@example.com
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="table_name"
+
+test_table__
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="columns"
+
+
+
+### Test logout
+GET http://localhost:8000/api/api-logout/
+Content-Type: application/json
+
+###
+GET http://localhost:8000/api-admin/api-customerslist/
+Content-Type: application/json
+
+
+#user list view
+###
+GET http://localhost:8000/api-admin/api-userslist/
+Content-Type: application/json
+
+#customer user update view
+###
+GET http://localhost:8000/api-admin/customer-user-update/1/
+Content-Type: application/json
+
+{
+    "cust_id": "14"
+}
+
+
+### Test Projects List API
+GET http://localhost:8000/api/api-projects-list/
+Content-Type: application/json
+
+### Test Column Statistics API - Numerical Column
+POST http://localhost:8000/api/api-column-statistics/
+Content-Type: application/json
+
+{
+    "column_name": "mat",
+    "table_name": "measurement__",
+    "schema": "GENERAL",
+    "user": "hancelxavier@gmail.com"
+}
+
+
+### Test Validation Rules API
+GET http://localhost:8000/api/api-validation-rules/
+
+

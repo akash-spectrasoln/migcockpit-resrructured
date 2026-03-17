@@ -1,0 +1,622 @@
+{% extends "base/navbar.html" %}
+
+{% block title %}Create Table - Data Migration API{% endblock %}
+
+{% block extra_styles %}
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+<style>
+    .create-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1.5rem;
+    }
+    .form-section {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid #dee2e6;
+    }
+    .form-section h5 {
+        color: #495057;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #007bff;
+        padding-bottom: 0.5rem;
+    }
+    .column-row {
+        transition: all 0.3s ease;
+    }
+    .column-row:hover {
+        background-color: #f8f9fa;
+    }
+    .column-actions {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+    }
+    .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    .data-type-select {
+        min-width: 120px;
+    }
+    .nullable-checkbox {
+        margin-top: 0.5rem;
+    }
+    .step-indicator {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 2rem;
+    }
+    .step {
+        display: flex;
+        align-items: center;
+        margin: 0 1rem;
+    }
+    .step-number {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background-color: #6c757d;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 0.5rem;
+    }
+    .step.active .step-number {
+        background-color: #007bff;
+    }
+    .step.completed .step-number {
+        background-color: #28a745;
+    }
+    .preview-section {
+        background: #e9ecef;
+        border-radius: 6px;
+        padding: 0.75rem;
+        margin-top: 0.75rem;
+    }
+    .table-structure {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        padding: 0.75rem;
+        font-family: 'Courier New', monospace;
+        font-size: 0.85em;
+    }
+    .required-field {
+        color: #dc3545;
+    }
+    .help-text {
+        font-size: 0.875em;
+        color: #6c757d;
+        margin-top: 0.25rem;
+    }
+    .compact-form {
+        max-width: 700px;
+    }
+    .columns-form {
+        max-width: 800px;
+    }
+</style>
+{% endblock %}
+
+{% block nav_links %}
+<li><a href="{% url 'customer_user_dashboard' %}">Dashboard</a></li>
+{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="create-container compact-form">
+    <h3 class="text-center mb-3">
+        <i class="fas fa-database text-primary"></i> Create New Table
+    </h3>
+    <p class="text-center text-muted mb-3">
+        Create a new table in your customer database
+    </p>
+
+    <!-- Step Indicator -->
+    <div class="step-indicator">
+        <div class="step active" id="step1">
+            <div class="step-number">1</div>
+            <span>Table Info</span>
+        </div>
+        <div class="step" id="step2">
+            <div class="step-number">2</div>
+            <span>Define Columns</span>
+        </div>
+        <div class="step" id="step3">
+            <div class="step-number">3</div>
+            <span>Review & Create</span>
+        </div>
+    </div>
+
+    <form id="createTableForm">
+        <!-- Step 1: Table Information -->
+        <div id="tableInfoStep" class="form-section">
+            <h6><i class="fas fa-info-circle"></i> Table Information</h6>
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="mb-2">
+                        <label for="tableNameInput" class="form-label">
+                            Table Name <span class="required-field">*</span>
+                        </label>
+                        <input type="text" class="form-control form-control-sm" id="tableNameInput" 
+                               placeholder="e.g., customer_data" required>
+                    </div>
+                </div>
+            </div>
+            <div class="mb-2">
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="tableScope" id="scopeLocal" value="local" checked>
+                    <label class="form-check-label" for="scopeLocal">Local</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="tableScope" id="scopeGlobal" value="global">
+                    <label class="form-check-label" for="scopeGlobal">Global</label>
+                </div>
+            </div>
+            <div class="text-end">
+                <button type="button" class="btn btn-primary btn-sm" id="nextToColumnsBtn">
+                    Next: Define Columns <i class="fas fa-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: Column Definition -->
+        <div id="columnsStep" class="form-section columns-form" style="display: none;">
+            <h6><i class="fas fa-columns"></i> Define Columns</h6>
+            <p class="text-muted mb-2 small">Add columns to your table.</p>
+            
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 30%">Column Name</th>
+                            <th style="width: 25%">Data Type</th>
+                            <th style="width: 15%">Nullable</th>
+                            <th style="width: 10%">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="columnsContainer">
+                        <!-- Columns will be added here dynamically -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="text-center mb-2">
+                <button type="button" class="btn btn-outline-primary btn-sm" id="addColumnBtn">
+                    <i class="fas fa-plus"></i> Add Column
+                </button>
+            </div>
+            
+            <div class="text-end">
+                <button type="button" class="btn btn-secondary btn-sm me-2" id="backToTableInfoBtn">
+                    <i class="fas fa-arrow-left"></i> Back
+                </button>
+                <button type="button" class="btn btn-primary btn-sm" id="nextToReviewBtn">
+                    Next: Review <i class="fas fa-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 3: Review and Create -->
+        <div id="reviewStep" class="form-section" style="display: none;">
+            <h6><i class="fas fa-eye"></i> Review Table Structure</h6>
+            
+            <div class="row mb-2">
+                <div class="col-md-12">
+                    <strong>Table Name:</strong> <span id="reviewTableName" class="text-primary"></span>
+                </div>
+            </div>
+            
+            <div class="preview-section">
+                <h6>Table Summary:</h6>
+                <div class="table-structure" id="tableStructurePreview">
+                    <!-- Table structure will be generated here -->
+                </div>
+            </div>
+            
+            <div class="text-end">
+                <button type="button" class="btn btn-secondary btn-sm me-2" id="backToColumnsBtn">
+                    <i class="fas fa-arrow-left"></i> Back to Columns
+                </button>
+                <button type="button" class="btn btn-success btn-sm" id="createTableBtn">
+                    <i class="fas fa-database"></i> Create Table
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <div class="loading text-center mt-3" style="display: none;">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-2" id="loadingText">Creating table...</p>
+    </div>
+
+    <div id="alertContainer"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
+<script>
+    // Global variables
+    let columnCount = 0;
+    let columns = [];
+    let selectedScope = null;
+    let schemaFromUrl = null;
+
+    // Data types available for columns
+    const dataTypes = [
+        { value: 'VARCHAR(255)', label: 'VARCHAR(255)', description: 'Variable character string' },
+        { value: 'TEXT', label: 'TEXT', description: 'Long text' },
+        { value: 'INTEGER', label: 'INTEGER', description: 'Whole number' },
+        { value: 'BIGINT', label: 'BIGINT', description: 'Large whole number' },
+        { value: 'DECIMAL(10,2)', label: 'DECIMAL(10,2)', description: 'Decimal number' },
+        { value: 'BOOLEAN', label: 'BOOLEAN', description: 'True/False' },
+        { value: 'DATE', label: 'DATE', description: 'Date only' },
+        { value: 'TIMESTAMP', label: 'TIMESTAMP', description: 'Date and time' }
+    ];
+
+    // Wait for DOM to be fully loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        // Read schema from URL if provided
+        const urlParams = new URLSearchParams(window.location.search);
+        schemaFromUrl = urlParams.get('schema');
+
+        // Initialize scope from checked radio
+        const checkedScope = document.querySelector('input[name="tableScope"]:checked');
+        selectedScope = checkedScope ? checkedScope.value : 'local';
+
+        initializeEventListeners();
+        addFirstColumn();
+    });
+
+    function initializeEventListeners() {
+
+        // Step navigation buttons
+        document.getElementById('nextToColumnsBtn').addEventListener('click', () => {
+            if (validateTableInfo()) {
+                showStep(2);
+            }
+        });
+
+        document.getElementById('backToTableInfoBtn').addEventListener('click', () => {
+            showStep(1);
+        });
+
+        document.getElementById('nextToReviewBtn').addEventListener('click', () => {
+            if (validateColumns()) {
+                showStep(3);
+                updateReviewSection();
+            }
+        });
+
+        document.getElementById('backToColumnsBtn').addEventListener('click', () => {
+            showStep(2);
+        });
+
+        document.getElementById('createTableBtn').addEventListener('click', () => {
+            createTable();
+        });
+
+        // Add column button
+        document.getElementById('addColumnBtn').addEventListener('click', () => {
+            addColumn();
+        });
+
+        // Scope radio buttons
+        document.querySelectorAll('input[name="tableScope"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                selectedScope = e.target.value;
+            });
+        });
+    }
+
+
+    function validateTableInfo() {
+        const tableName = document.getElementById('tableNameInput').value.trim();
+
+        if (!tableName) {
+            showAlert('Please enter a table name', 'danger');
+            return false;
+        }
+
+        // Validate table name format
+        const cleanTableName = tableName.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+/, '');
+        if (!cleanTableName || !/^[a-z]/.test(cleanTableName)) {
+            showAlert('Table name must start with a letter and contain only letters, numbers, and underscores', 'danger');
+            return false;
+        }
+
+        return true;
+    }
+
+    function validateColumns() {
+        if (columns.length === 0) {
+            showAlert('Please add at least one column to the table', 'danger');
+            return false;
+        }
+
+        // Check for duplicate column names
+        const columnNames = columns.map(col => col.name.toLowerCase());
+        const duplicates = columnNames.filter((name, index) => columnNames.indexOf(name) !== index);
+        
+        if (duplicates.length > 0) {
+            showAlert(`Duplicate column names found: ${duplicates.join(', ')}`, 'danger');
+            return false;
+        }
+
+        return true;
+    }
+
+    function addColumn() {
+        columnCount++;
+        const columnId = `column_${columnCount}`;
+        
+        const columnRow = document.createElement('tr');
+        columnRow.className = 'column-row';
+        columnRow.id = columnId;
+        
+        columnRow.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm column-name" placeholder="e.g., first_name" required>
+            </td>
+            <td>
+                <select class="form-select form-select-sm data-type-select" required>
+                    <option value="">Select type...</option>
+                    ${dataTypes.map(type => `<option value="${type.value}">${type.label}</option>`).join('')}
+                </select>
+            </td>
+            <td class="text-center">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" checked>
+                </div>
+            </td>
+            <td class="text-center">
+                <button type="button" class="btn btn-outline-danger btn-sm remove-column" title="Remove column">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </td>
+        `;
+
+        document.getElementById('columnsContainer').appendChild(columnRow);
+
+        // Add event listeners for this column
+        addColumnEventListeners(columnId);
+        
+        // Focus on the column name input
+        columnRow.querySelector('.column-name').focus();
+    }
+
+    function addFirstColumn() {
+        addColumn();
+    }
+
+    function addColumnEventListeners(columnId) {
+        const columnRow = document.getElementById(columnId);
+        
+        // Remove column button
+        columnRow.querySelector('.remove-column').addEventListener('click', () => {
+            removeColumn(columnId);
+        });
+
+        // Update columns array when inputs change
+        const inputs = columnRow.querySelectorAll('input, select');
+        inputs.forEach(input => {
+            input.addEventListener('change', () => {
+                updateColumnsArray();
+            });
+            input.addEventListener('input', () => {
+                updateColumnsArray();
+            });
+        });
+
+    }
+
+    function removeColumn(columnId) {
+        if (columns.length <= 1) {
+            showAlert('Table must have at least one column', 'warning');
+            return;
+        }
+        
+        document.getElementById(columnId).remove();
+        updateColumnsArray();
+    }
+
+    function updateColumnsArray() {
+        columns = [];
+        const columnRows = document.querySelectorAll('.column-row');
+        
+        columnRows.forEach(row => {
+            const name = row.querySelector('.column-name').value.trim();
+            const dataType = row.querySelector('.data-type-select').value;
+            const isNullable = row.querySelector('.form-check input').checked;
+            
+            if (name && dataType) {
+                columns.push({
+                    name: name,
+                    dataType: dataType,
+                    isNullable: isNullable
+                });
+            }
+        });
+    }
+
+    function updateReviewSection() {
+        const tableName = document.getElementById('tableNameInput').value.trim();
+        
+        document.getElementById('reviewTableName').textContent = tableName;
+        
+        generateTableStructurePreview();
+    }
+
+    function generateTableStructurePreview() {
+        const tableName = document.getElementById('tableNameInput').value.trim().toLowerCase()
+            .replace(/[^a-z0-9_]/g, '_').replace(/^_+/, '');
+        
+        let structure = `Table name: ${tableName}\n\n`;
+        structure += `Columns: `;
+        
+        // Start with the auto-increment ID field
+        const columnList = ['__id SERIAL PRIMARY KEY'];
+        
+        // Add user-defined columns
+        columns.forEach(col => {
+            const nullable = col.isNullable ? 'NULL' : 'NOT NULL';
+            columnList.push(`${col.name} ${col.dataType} ${nullable}`);
+        });
+        
+        structure += columnList.join(', ');
+        
+        document.getElementById('tableStructurePreview').textContent = structure;
+    }
+
+    function showStep(stepNumber) {
+        // Update step indicators
+        document.querySelectorAll('.step').forEach((step, index) => {
+            step.classList.remove('active', 'completed');
+            if (index + 1 < stepNumber) {
+                step.classList.add('completed');
+            } else if (index + 1 === stepNumber) {
+                step.classList.add('active');
+            }
+        });
+
+        // Show/hide sections
+        document.getElementById('tableInfoStep').style.display = stepNumber === 1 ? 'block' : 'none';
+        document.getElementById('columnsStep').style.display = stepNumber === 2 ? 'block' : 'none';
+        document.getElementById('reviewStep').style.display = stepNumber === 3 ? 'block' : 'none';
+    }
+
+    function createTable() {
+        if (!validateTableInfo() || !validateColumns()) {
+            return;
+        }
+
+        const tableName = document.getElementById('tableNameInput').value.trim();
+        
+        const requestData = {
+            table_name: tableName,
+            column_names: columns.map(col => ({
+                column_name: col.name,
+                data_type: col.dataType,
+                is_nullable: col.isNullable
+            })),
+            scope: selectedScope,
+            schema: schemaFromUrl
+        };
+
+        showLoading('Creating table...');
+        clearAlerts();
+
+        const csrfToken = getCookie('csrftoken');
+
+        fetch('{% url "create-table-api" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.text().then(text => {
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const errorData = JSON.parse(text);
+                        if (errorData.detail) {
+                            errorMessage = errorData.detail;
+                        } else if (errorData.error) {
+                            errorMessage = errorData.error;
+                        }
+                    } catch (e) {
+                        if (text) {
+                            errorMessage = text;
+                        }
+                    }
+                    throw new Error(errorMessage);
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            hideLoading();
+            
+            if (data.error) {
+                showAlert(data.error, 'danger');
+            } else {
+                showAlert(data.message, 'success');
+                // Briefly show success, then redirect to schema user tables
+                setTimeout(() => {
+                    window.location.href = `/api/user-tables/${encodeURIComponent(schemaFromUrl)}/`;
+                }, 1200);
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            showAlert(`Failed to create table: ${error.message}`, 'danger');
+        });
+    }
+
+    function resetForm() {
+        // Reset form fields
+        document.getElementById('tableNameInput').value = '';
+        
+        // Reset columns
+        document.getElementById('columnsContainer').innerHTML = '';
+        columns = [];
+        columnCount = 0;
+        
+        // Reset to first step
+        showStep(1);
+        addFirstColumn();
+        clearAlerts();
+    }
+
+    function showLoading(text = 'Processing...') {
+        document.getElementById('loadingText').textContent = text;
+        document.querySelector('.loading').style.display = 'block';
+    }
+
+    function hideLoading() {
+        document.querySelector('.loading').style.display = 'none';
+    }
+
+    function showAlert(message, type) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.getElementById('alertContainer').appendChild(alertDiv);
+    }
+
+    function clearAlerts() {
+        document.getElementById('alertContainer').innerHTML = '';
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+</script>
+{% endblock %}

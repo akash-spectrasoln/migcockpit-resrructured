@@ -1,0 +1,116 @@
+[tool.ruff]
+target-version = "py39"   # match the production Python version
+line-length = 120          # codebase has many lines 100-120 chars; 120 is the practical limit
+
+# ── Exclude from linting entirely ────────────────────────────────────────────
+exclude = [
+    ".git",
+    "__pycache__",
+    "*.egg-info",
+    "dist",
+    "build",
+    "node_modules",
+    "frontend",           # TypeScript — handled by ESLint
+    "venv",
+    ".venv",
+    "migrations",         # Django auto-generated — never lint
+    ".cursor",
+    "encryption",         # deprecated root folder
+    "fetch_sqlserver",    # deprecated root folder
+    "hana_connection",    # deprecated root folder
+]
+
+# ── Lint (rule sets and ignores) ─────────────────────────────────────────────
+[tool.ruff.lint]
+# Rule sets
+select = [
+    "E",    # pycodestyle errors (indentation, whitespace, syntax style)
+    "W",    # pycodestyle warnings (trailing whitespace, blank lines)
+    "F",    # pyflakes (undefined names, unused imports, redefined symbols)
+    "I",    # isort (import ordering)
+    "B",    # flake8-bugbear (likely bugs: bare except, mutable defaults, etc.)
+    "C4",   # flake8-comprehensions (unnecessary list()/dict() calls)
+    "UP",   # pyupgrade (modernise syntax: List→list, Optional→X|None, etc.)
+    "RUF",  # ruff-specific (ambiguous names, unnecessary casts)
+]
+# NOTE: "N" (pep8-naming) and "T" (print) are intentionally excluded:
+#   N — too many false positives on Django CBVs, serializers and model constants
+#   T201 — print() calls exist intentionally in connectors for debug output
+
+ignore = [
+    "E501",   # line too long — 120 char limit set above; remaining reviewed manually
+    "B008",   # function call in default argument — needed in FastAPI/DRF endpoints
+    "B904",   # raise without from inside except — many legacy except blocks
+    "RUF012", # mutable class attributes — normal pattern in Django models
+    "UP007",  # Use X | Y instead of Optional/Union — requires Python 3.10+; we target 3.9
+    "UP035",  # typing imports deprecated — handled per-file below
+    "E402",   # module-level import not at top — needed in settings.py and some utils
+    "F403",   # star import — used in deprecated re-export stubs (api/utils/, api/services/)
+    "F405",   # may be undefined from star import — same as above
+]
+
+# Per-file ignores
+[tool.ruff.lint.per-file-ignores]
+# Deprecated stub files intentionally use star imports
+"api/utils/*.py"          = ["F401", "F403", "F405"]
+"api/services/*.py"       = ["F401", "F403", "F405"]
+
+# Settings files have late imports and environment-based logic
+"datamigrationapi/settings*.py" = ["E402", "F401"]
+"datamigrationapi/local_settings.py" = ["F401", "E402"]
+
+# manage.py, wsgi, asgi — boilerplate Django files
+"manage.py"               = ["E402"]
+"datamigrationapi/wsgi.py" = ["E402"]
+"datamigrationapi/asgi.py" = ["E402"]
+
+# Test files — allow assert, magic values, and unused imports (fixtures)
+"tests/**/*.py"           = ["S101", "B011", "F401", "B007"]
+"tests/unit/**/*.py"      = ["S101", "B011", "F401", "B007"]
+
+# One-time setup scripts at root
+"fix_settings.py"         = ["E402", "F401"]
+"create_general_schema.py" = ["E402", "F401"]
+
+# Import ordering (isort)
+[tool.ruff.lint.isort]
+known-first-party  = ["api", "api_admin", "domain", "ports", "services"]
+known-third-party  = ["django", "rest_framework", "rest_framework_simplejwt",
+                      "celery", "fastapi", "pydantic", "psycopg2", "cryptography"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+force-sort-within-sections = true
+split-on-trailing-comma = true
+
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts      = "-v --tb=short"
+markers = [
+    "unit: No database, no network — runs in milliseconds",
+    "integration: Requires a real database — auto-skips if unavailable",
+    "slow: Takes more than 5 seconds",
+]
+# Uncomment once pytest-django is installed:
+# DJANGO_SETTINGS_MODULE = "datamigrationapi.settings"
+
+
+# ── Coverage (pytest-cov) ─────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["api", "domain", "ports", "services"]
+omit   = [
+    "*/migrations/*",
+    "*/tests/*",
+    "*/__pycache__/*",
+    "manage.py",
+    "*/settings*.py",
+    "*/local_settings.py",
+]
+
+[tool.coverage.report]
+skip_empty   = true
+show_missing = true
+fail_under   = 40   # raise this gradually as coverage improves

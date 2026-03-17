@@ -1,0 +1,172 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Data Source Connection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f7fb; padding: 1.5rem; }
+    .page { width: 100%; max-width: 640px; display: grid; gap: 1rem; }
+    h1 { margin: 0; text-align: center; font-size: 1.5rem; }
+    form { width: 100%; display: grid; gap: 0.85rem; background: #fff; padding: 1.25rem; border-radius: 10px; border: 1px solid #e8eaf0; box-shadow: 0 8px 20px rgba(16, 24, 40, 0.06); }
+    label { font-weight: 600; }
+    input, select { padding: 0.6rem 0.75rem; font-size: 1rem; border: 1px solid #d0d5dd; border-radius: 8px; outline: none; width: 100%; box-sizing: border-box; }
+    input:focus, select:focus { border-color: #7f56d9; box-shadow: 0 0 0 3px rgba(127, 86, 217, 0.15); }
+    button { padding: 0.7rem 1rem; font-size: 1rem; cursor: pointer; border-radius: 8px; border: 1px solid #7f56d9; background: #7f56d9; color: #fff; transition: transform 0.02s ease, filter 0.15s ease; }
+    button:hover { filter: brightness(1.05); }
+    button:active { transform: translateY(1px); }
+    .row { display: grid; gap: 0.35rem;}
+    .help { color: #475467; font-size: 0.85rem; }
+    #result { margin-top: 0.5rem; white-space: pre-wrap; background: #fff; border: 1px solid #e8eaf0; border-radius: 10px; padding: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.9rem; }
+    .error { color: #b00020; }
+    .ok { color: #036400; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Connect to Source</h1>
+    <form id="conn-form">
+      {% csrf_token %}
+      <div class="row">
+        <label for="source_id">Source</label>
+        <select id="source_id" name="source_id" required></select>
+      </div>
+
+      <div id="dynamic-fields"></div>
+
+      <button id="submit-btn" type="submit" disabled>Submit</button>
+    </form>
+    <div id="result"></div>
+  </div>
+
+  <script>
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+    const csrftoken = getCookie('csrftoken');
+
+    const sourceSelect = document.getElementById('source_id');
+    const fieldsContainer = document.getElementById('dynamic-fields');
+    const form = document.getElementById('conn-form');
+    const result = document.getElementById('result');
+    const submitBtn = document.getElementById('submit-btn');
+
+    async function fetchJSON(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function inputForField(field) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'row';
+
+      const label = document.createElement('label');
+      label.setAttribute('for', field.attribute_name);
+      label.textContent = field.label_name + (field.is_required ? ' *' : '');
+      wrapper.appendChild(label);
+
+      let input = document.createElement('input');
+      input.id = field.attribute_name;
+      input.name = field.attribute_name;
+      input.required = !!field.is_required;
+
+      if (field.input_type === 'password') input.type = 'password';
+      else if (field.input_type === 'number') input.type = 'number';
+      else input.type = 'text';
+
+      wrapper.appendChild(input);
+
+      // store attribute_name for mapping on submit
+      input.dataset.apiName = field.attribute_name;
+      return wrapper;
+    }
+
+    async function loadSources() {
+      sourceSelect.innerHTML = '';
+      submitBtn.disabled = true;
+      fieldsContainer.innerHTML = '';
+
+      try {
+        const sources = await fetchJSON('/api/sources/');
+        if (!sources.length) {
+          sourceSelect.innerHTML = '<option value="">No sources configured</option>';
+          return;
+        }
+        for (const s of sources) {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.src_db;
+          sourceSelect.appendChild(opt);
+        }
+        await loadFieldsFor(sourceSelect.value);
+      } catch (e) {
+        result.className = 'error';
+        result.textContent = 'Failed to load sources: ' + e.message;
+      }
+    }
+
+    async function loadFieldsFor(sourceId) {
+      fieldsContainer.innerHTML = '';
+      submitBtn.disabled = true;
+      try {
+        const fields = await fetchJSON(`/api/sources/${sourceId}/fields/`);
+        for (const f of fields) {
+          fieldsContainer.appendChild(inputForField(f));
+        }
+        submitBtn.disabled = fields.length === 0;
+      } catch (e) {
+        result.className = 'error';
+        result.textContent = 'Failed to load fields: ' + e.message;
+      }
+    }
+
+    sourceSelect.addEventListener('change', async (e) => {
+      await loadFieldsFor(e.target.value);
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      result.textContent = 'Submitting...';
+      result.className = '';
+
+      // Build payload using api_name mapping per input
+      const inputs = fieldsContainer.querySelectorAll('input');
+      const payload = {};
+      inputs.forEach(input => {
+        const key = input.dataset.apiName || input.name;
+        let val = input.type === 'number' ? Number(input.value) : input.value;
+        payload[key] = val;
+      });
+
+      try {
+        const res = await fetch('/api/fetch/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken || '',
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          result.className = 'ok';
+          result.textContent = JSON.stringify(data, null, 2);
+        } else {
+          result.className = 'error';
+          result.textContent = JSON.stringify(data, null, 2);
+        }
+      } catch (err) {
+        result.className = 'error';
+        result.textContent = 'Request failed: ' + err.message;
+      }
+    });
+
+    loadSources();
+  </script>
+</body>
+</html>

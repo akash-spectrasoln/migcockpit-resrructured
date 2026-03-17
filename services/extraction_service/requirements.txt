@@ -1,0 +1,12 @@
+# FastAPI Extraction Service Dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+httpx>=0.25.0
+
+# Database Connectors
+psycopg2-binary>=2.9.0  # PostgreSQL
+mysql-connector-python>=8.2.0  # MySQL
+pyodbc>=5.0.0  # SQL Server
+cx_Oracle>=8.3.0  # Oracle (optional - install separately if needed)
+

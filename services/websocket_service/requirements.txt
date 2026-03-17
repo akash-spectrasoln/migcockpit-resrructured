@@ -1,0 +1,6 @@
+# WebSocket server (port 8004) - required for real-time migration updates
+# Install from services/websocket_server: pip install -r requirements.txt
+fastapi>=0.95.0
+uvicorn[standard]>=0.20.0
+python-socketio>=5.9.0
+python-engineio>=4.5.0

@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Table Management - Data Migration API</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .management-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .upload-area {
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            background-color: #f8f9fa;
+            transition: all 0.3s ease;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .preview-section {
+            display: none;
+            margin-top: 2rem;
+        }
+        .data-preview {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+        }
+        .loading {
+            display: none;
+        }
+        .alert {
+            margin-top: 1rem;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        .step {
+            display: flex;
+            align-items: center;
+            margin: 0 1rem;
+        }
+        .step-number {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #6c757d;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 0.5rem;
+        }
+        .step.active .step-number {
+            background-color: #007bff;
+        }
+        .step.completed .step-number {
+            background-color: #28a745;
+        }
+        .table-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .table-card:hover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        .table-card.selected {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .table-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .table-name {
+            font-weight: bold;
+            color: #007bff;
+        }
+        .table-stats {
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+        .column-change-info {
+            border-left: 4px solid #0dcaf0;
+            background-color: #d1ecf1;
+        }
+        .column-change-info h6 {
+            color: #055160;
+            font-weight: 600;
+        }
+        .column-change-info .table {
+            font-size: 0.9em;
+        }
+        .column-change-info .table th {
+            background-color: #e2e3e5;
+            border-color: #dee2e6;
+        }
+        .column-change-info .table td {
+            vertical-align: middle;
+        }
+        .column-change-info code {
+            background-color: #f8f9fa;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 0.85em;
+        }
+        .record-field {
+            margin-bottom: 0.75rem;
+        }
+        .record-field label {
+            font-weight: 500;
+            color: #495057;
+            margin-bottom: 0.5rem;
+        }
+        .record-field .field-type {
+            font-size: 0.8em;
+            color: #6c757d;
+            font-style: italic;
+        }
+        .record-field input, .record-field select, .record-field textarea {
+            border-radius: 0.375rem;
+        }
+        .record-field input:focus, .record-field select:focus, .record-field textarea:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+        .required-field {
+            color: #dc3545;
+        }
+        .form-validation-error {
+            color: #dc3545;
+            font-size: 0.875em;
+            margin-top: 0.25rem;
+        }
+        .btn-group .btn-check:checked + .btn {
+            background-color: #007bff;
+            border-color: #007bff;
+            color: white;
+        }
+        .record-field .field-type {
+            font-size: 0.75em;
+            color: #6c757d;
+            font-style: italic;
+            margin-bottom: 0.25rem;
+        }
+        .record-field input, .record-field select, .record-field textarea {
+            font-size: 0.9em;
+        }
+        #recordFieldsContainer {
+            max-height: 500px;
+            overflow-y: auto;
+            padding-right: 10px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    {% csrf_token %}
+    <div class="container-fluid">
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+            <div class="container">
+                <a class="navbar-brand" href="{% url 'sql_connection_form' %}">Data Migration API</a>
+                <div class="navbar-nav ms-auto">
+
+                </div>
+            </div>
+        </nav>
+
+        <div class="management-container">
+            <h2 class="text-center mb-4">Table Management</h2>
+            <p class="text-center text-muted mb-4">
+                Select a table from your customer database and add data from Excel/CSV files
+            </p>
+
+            <!-- Step Indicator -->
+            <div class="step-indicator">
+                <div class="step active" id="step1">
+                    <div class="step-number">1</div>
+                    <span>Enter User ID</span>
+                </div>
+                <div class="step" id="step2">
+                    <div class="step-number">2</div>
+                    <span>Select Table</span>
+                </div>
+                <div class="step" id="step3">
+                    <div class="step-number">3</div>
+                    <span>Upload Data</span>
+                </div>
+            </div>
+
+            <!-- Step 1: User ID Input -->
+            <div id="userStep">
+                <div class="row mb-3">
+                    <div class="col-md-4 mx-auto">
+                        <div class="mb-3">
+                            <label for="userIdInput" class="form-label">User ID (Email):</label>
+                            <input type="email" class="form-control form-control-sm" id="userIdInput" placeholder="Enter your email address" required>
+                        </div>
+                        <div class="text-center">
+                            <button type="button" class="btn btn-primary" id="loadTablesBtn">
+                                Load Tables
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Table Selection -->
+            <div id="tableStep" style="display: none;">
+                <div class="row">
+                    <div class="col-12">
+                        <h4>Select a Table to Add Data</h4>
+                        <p class="text-muted">Showing tables ending with "__" from GENERAL schema</p>
+                        <div id="tablesList">
+                            <!-- Tables will be populated here -->
+                        </div>
+                        <div class="text-center mt-3">
+                            <button type="button" class="btn btn-secondary me-2" id="backToUserBtn">
+                                Back to User ID
+                            </button>
+                            <button type="button" class="btn btn-success" id="proceedToUploadBtn" disabled>
+                                Proceed to Upload
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Data Upload -->
+            <div id="uploadStep" style="display: none;">
+                <div class="row">
+                    <div class="col-12">
+                        <h4>Add Data to Selected Table</h4>
+                        <div class="mb-3">
+                            <strong>Selected Table:</strong> <span id="selectedTableName" class="text-primary"></span>
+                        </div>
+                        
+                        <!-- Data Entry Method Selection -->
+                        <div class="mb-4">
+                            <div class="btn-group" role="group" aria-label="Data entry method">
+                                <input type="radio" class="btn-check" name="dataEntryMethod" id="fileUploadMethod" value="file" checked>
+                                <label class="btn btn-outline-primary" for="fileUploadMethod">
+                                    <i class="fas fa-file-upload"></i> Upload File
+                                </label>
+                                
+                                <input type="radio" class="btn-check" name="dataEntryMethod" id="recordEntryMethod" value="record">
+                                <label class="btn btn-outline-primary" for="recordEntryMethod">
+                                    <i class="fas fa-keyboard"></i> Add Record
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- File Upload Section -->
+                        <div id="fileUploadSection">
+                            <div class="upload-area" id="uploadArea">
+                                <div class="upload-icon">
+                                    <i class="fas fa-cloud-upload-alt fa-2x text-muted mb-2"></i>
+                                </div>
+                                <h5>Drop files here or click to browse</h5>
+                                <p class="text-muted small">Supports CSV (.csv) and Excel (.xlsx) files</p>
+                                <input type="file" id="fileInput" class="d-none" accept=".csv,.xlsx">
+                                <button type="button" class="btn btn-primary btn-sm" id="chooseFileBtn">
+                                    Choose File
+                                </button>
+                                <button type="button" class="btn btn-success btn-sm ms-2" id="previewDataBtn" style="display: none;">
+                                    Preview Data
+                                </button>
+                            </div>
+
+                            <div class="preview-section" id="previewSection">
+                                <h5>Data Preview</h5>
+                                <div class="data-preview" id="dataPreview">
+                                    <!-- Data preview will be populated here -->
+                                </div>
+                                <div class="text-center mt-3">
+                                    <button type="button" class="btn btn-secondary me-2" id="backToTableBtn">
+                                        Back to Table Selection
+                                    </button>
+                                    <button type="button" class="btn btn-success" id="uploadDataBtn">
+                                        Upload Data to Table
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Record Entry Section -->
+                        <div id="recordEntrySection" style="display: none;">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-plus-circle"></i> Add New Record
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="recordEntryForm">
+                                        <div id="recordFieldsContainer">
+                                            <!-- Dynamic form fields will be generated here -->
+                                        </div>
+                                        <div class="text-center mt-4">
+                                            <button type="button" class="btn btn-secondary me-2" id="backToTableBtnRecord">
+                                                Back to Table Selection
+                                            </button>
+                                            <button type="submit" class="btn btn-success" id="submitRecordBtn">
+                                                <i class="fas fa-save"></i> Save Record
+                                            </button>
+                                            <button type="button" class="btn btn-outline-primary ms-2" id="addAnotherRecordBtn" style="display: none;">
+                                                <i class="fas fa-plus"></i> Add Another Record
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="loading text-center mt-3">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2" id="loadingText">Processing...</p>
+            </div>
+
+            <div id="alertContainer"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script>
+    <script>
+        // Global variables
+        let currentFile = null;
+        let selectedTable = null;
+        let selectedUserId = null;
+        let sampleData = null;
+        let tableColumns = null;
+
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            const userIdInput = document.getElementById('userIdInput');
+            const loadTablesBtn = document.getElementById('loadTablesBtn');
+            const backToUserBtn = document.getElementById('backToUserBtn');
+            const proceedToUploadBtn = document.getElementById('proceedToUploadBtn');
+            const backToTableBtn = document.getElementById('backToTableBtn');
+            const backToTableBtnRecord = document.getElementById('backToTableBtnRecord');
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+            const chooseFileBtn = document.getElementById('chooseFileBtn');
+            const previewDataBtn = document.getElementById('previewDataBtn');
+            const uploadDataBtn = document.getElementById('uploadDataBtn');
+            const loading = document.querySelector('.loading');
+            const alertContainer = document.getElementById('alertContainer');
+            
+            // Record entry elements
+            const fileUploadMethod = document.getElementById('fileUploadMethod');
+            const recordEntryMethod = document.getElementById('recordEntryMethod');
+            const fileUploadSection = document.getElementById('fileUploadSection');
+            const recordEntrySection = document.getElementById('recordEntrySection');
+            const recordEntryForm = document.getElementById('recordEntryForm');
+            const submitRecordBtn = document.getElementById('submitRecordBtn');
+            const addAnotherRecordBtn = document.getElementById('addAnotherRecordBtn');
+
+            // Step 1: Load tables
+            loadTablesBtn.addEventListener('click', () => {
+                const userId = userIdInput.value.trim();
+                if (!userId) {
+                    showAlert('Please enter a user ID (email address)', 'danger');
+                    return;
+                }
+                loadTables(userId);
+            });
+
+            // Step 2: Table selection
+            proceedToUploadBtn.addEventListener('click', () => {
+                if (selectedTable) {
+                    showStep(3);
+                    document.getElementById('selectedTableName').textContent = selectedTable.table_name;
+                }
+            });
+
+            // Step 3: File upload
+            backToUserBtn.addEventListener('click', () => {
+                showStep(1);
+                resetForm();
+            });
+
+            backToTableBtn.addEventListener('click', () => {
+                showStep(2);
+            });
+
+            // Drag and drop functionality
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFileSelection(files[0]);
+                }
+            });
+
+            uploadArea.addEventListener('click', (e) => {
+                if (e.target === uploadArea || e.target.classList.contains('upload-icon') || e.target.tagName === 'I') {
+                    fileInput.click();
+                }
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFileSelection(e.target.files[0]);
+                }
+            });
+
+            chooseFileBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+
+            previewDataBtn.addEventListener('click', () => {
+                if (currentFile) {
+                    previewData();
+                }
+            });
+
+            uploadDataBtn.addEventListener('click', () => {
+                uploadDataToTable();
+            });
+
+            // Data entry method selection
+            fileUploadMethod.addEventListener('change', () => {
+                if (fileUploadMethod.checked) {
+                    fileUploadSection.style.display = 'block';
+                    recordEntrySection.style.display = 'none';
+                }
+            });
+
+            recordEntryMethod.addEventListener('change', () => {
+                if (recordEntryMethod.checked) {
+                    fileUploadSection.style.display = 'none';
+                    recordEntrySection.style.display = 'block';
+                    if (selectedTable && !tableColumns) {
+                        loadTableColumns();
+                    }
+                }
+            });
+
+            // Record entry form submission
+            recordEntryForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                submitRecord();
+            });
+
+            // Back to table selection from record entry
+            backToTableBtnRecord.addEventListener('click', () => {
+                showStep(2);
+            });
+
+            // Add another record
+            addAnotherRecordBtn.addEventListener('click', () => {
+                clearRecordForm();
+            });
+
+            function loadTableColumns() {
+                if (!selectedTable || !selectedUserId) {
+                    showAlert('No table selected or user ID missing', 'danger');
+                    return;
+                }
+
+                showLoading('Loading table structure...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch('{% url "get-table-data-api" %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ 
+                        user_id: selectedUserId,
+                        table_name: selectedTable.table_name,
+                        page: 1,
+                        page_size: 1
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        tableColumns = data.columns;
+                        generateRecordForm();
+                        showAlert('Table structure loaded successfully', 'success');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Failed to load table structure: ${error.message}`, 'danger');
+                });
+            }
+
+            function generateRecordForm() {
+                const container = document.getElementById('recordFieldsContainer');
+                container.innerHTML = '';
+
+                if (!tableColumns || tableColumns.length === 0) {
+                    container.innerHTML = '<div class="alert alert-warning">No columns found for this table.</div>';
+                    return;
+                }
+
+                let formHtml = '';
+                
+                tableColumns.forEach(column => {
+                    // Skip ID field and auto-generated fields
+                    if (column.name.toLowerCase() === 'id' || 
+                        column.name.toLowerCase().includes('created') || 
+                        column.name.toLowerCase().includes('updated') ||
+                        column.name.toLowerCase().includes('modified')) {
+                        return;
+                    }
+
+                    const fieldId = `field_${column.name}`;
+                    const isRequired = !column.name.toLowerCase().includes('optional') && 
+                                     !column.name.toLowerCase().includes('note') &&
+                                     !column.name.toLowerCase().includes('comment');
+                    
+                    formHtml += `
+                        <div class="record-field">
+                            <label for="${fieldId}" class="form-label">
+                                ${column.name}
+                                ${isRequired ? '<span class="required-field">*</span>' : ''}
+                            </label>
+                            <div class="field-type">${column.type}</div>
+                            ${generateFieldInput(column, fieldId, isRequired)}
+                            <div class="form-validation-error" id="${fieldId}_error" style="display: none;"></div>
+                        </div>
+                    `;
+                });
+                
+                container.innerHTML = formHtml;
+            }
+
+            function generateFieldInput(column, fieldId, isRequired) {
+                const columnType = column.type.toLowerCase();
+                const requiredAttr = isRequired ? 'required' : '';
+                
+                if (columnType.includes('text') || columnType.includes('varchar')) {
+                    const maxLength = columnType.includes('varchar') ? 
+                        (columnType.match(/varchar\((\d+)\)/) ? columnType.match(/varchar\((\d+)\)/)[1] : '255') : '';
+                    return `<input type="text" class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr} ${maxLength ? `maxlength="${maxLength}"` : ''}>`;
+                } else if (columnType.includes('integer') || columnType.includes('bigint') || columnType.includes('smallint')) {
+                    return `<input type="number" class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr} step="1">`;
+                } else if (columnType.includes('numeric') || columnType.includes('decimal') || columnType.includes('real') || columnType.includes('double')) {
+                    return `<input type="number" class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr} step="any">`;
+                } else if (columnType.includes('boolean')) {
+                    return `
+                        <select class="form-select" id="${fieldId}" name="${column.name}" ${requiredAttr}>
+                            <option value="">Select...</option>
+                            <option value="true">True</option>
+                            <option value="false">False</option>
+                        </select>
+                    `;
+                } else if (columnType.includes('date')) {
+                    return `<input type="date" class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr}>`;
+                } else if (columnType.includes('timestamp') || columnType.includes('datetime')) {
+                    return `<input type="datetime-local" class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr}>`;
+                } else if (columnType.includes('time')) {
+                    return `<input type="time" class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr}>`;
+                } else {
+                    return `<textarea class="form-control" id="${fieldId}" name="${column.name}" ${requiredAttr} rows="3"></textarea>`;
+                }
+            }
+
+            function submitRecord() {
+                if (!selectedTable || !selectedUserId) {
+                    showAlert('No table selected or user ID missing', 'danger');
+                    return;
+                }
+
+                // Clear previous validation errors
+                clearValidationErrors();
+
+                // Collect form data
+                const formData = new FormData(recordEntryForm);
+                const recordData = {};
+                let hasErrors = false;
+
+                // Validate and collect data
+                tableColumns.forEach(column => {
+                    // Skip ID field and auto-generated fields
+                    if (column.name.toLowerCase() === 'id' || 
+                        column.name.toLowerCase().includes('created') || 
+                        column.name.toLowerCase().includes('updated') ||
+                        column.name.toLowerCase().includes('modified')) {
+                        return;
+                    }
+
+                    const fieldId = `field_${column.name}`;
+                    const field = document.getElementById(fieldId);
+                    const value = field ? field.value.trim() : '';
+                    const isRequired = !column.name.toLowerCase().includes('optional') && 
+                                     !column.name.toLowerCase().includes('note') &&
+                                     !column.name.toLowerCase().includes('comment');
+                    
+                    if (isRequired && !value) {
+                        showFieldError(fieldId, 'This field is required');
+                        hasErrors = true;
+                    } else if (value) {
+                        // Send raw string value without conversion - let backend handle validation
+                        recordData[column.name] = value;
+                    }
+                });
+
+                if (hasErrors) {
+                    showAlert('Please fix the validation errors before submitting', 'danger');
+                    return;
+                }
+
+                // Submit record
+                showLoading('Saving record...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch('{% url "create-table-record-api" %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        user_id: selectedUserId,
+                        table_name: selectedTable.table_name,
+                        record_data: recordData
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        showAlert(data.message, 'success');
+                        addAnotherRecordBtn.style.display = 'inline-block';
+                        showAlert('Record saved successfully! You can add another record or go back to table selection.', 'success');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Failed to save record: ${error.message}`, 'danger');
+                });
+            }
+
+
+            function clearRecordForm() {
+                const form = document.getElementById('recordEntryForm');
+                form.reset();
+                clearValidationErrors();
+                addAnotherRecordBtn.style.display = 'none';
+            }
+
+            function clearValidationErrors() {
+                document.querySelectorAll('.form-validation-error').forEach(error => {
+                    error.style.display = 'none';
+                    error.textContent = '';
+                });
+            }
+
+            function showFieldError(fieldId, message) {
+                const errorElement = document.getElementById(`${fieldId}_error`);
+                if (errorElement) {
+                    errorElement.textContent = message;
+                    errorElement.style.display = 'block';
+                }
+            }
+
+            function loadTables(userId) {
+                showLoading('Loading tables...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                const project_id = 'M01'
+
+                fetch('/api/api-list-uploaded-tables/${project_id}/', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        selectedUserId = userId;
+                        populateTablesList(data.tables);
+                        showStep(2);
+                        showAlert(data.message, 'success');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Failed to load tables: ${error.message}`, 'danger');
+                });
+            }
+
+            function populateTablesList(tables) {
+                const tablesList = document.getElementById('tablesList');
+                
+                if (!tables || tables.length === 0) {
+                    tablesList.innerHTML = '<div class="alert alert-info">No tables found ending with "__" in the GENERAL schema.</div>';
+                    return;
+                }
+
+                // Filter tables to ensure only those ending with '__' are displayed
+                const filteredTables = tables.filter(table => table.table_name.endsWith('__'));
+                
+                if (filteredTables.length === 0) {
+                    tablesList.innerHTML = '<div class="alert alert-warning">No valid tables found. All tables must end with "__" to be displayed.</div>';
+                    return;
+                }
+
+                // Show warning if some tables were filtered out
+                if (filteredTables.length < tables.length) {
+                    const filteredCount = tables.length - filteredTables.length;
+                    showAlert(`Note: ${filteredCount} table(s) were filtered out because they don't end with "__". Only showing ${filteredTables.length} valid table(s).`, 'info');
+                }
+
+                let tablesHtml = '<div class="row">';
+                filteredTables.forEach(table => {
+                    tablesHtml += `
+                        <div class="col-md-6 col-lg-4">
+                            <div class="table-card" data-table-name="${table.table_name}" onclick="selectTable('${table.table_name}', this)">
+                                <div class="table-info">
+                                    <div>
+                                        <div class="table-name">${table.table_name.replace(/__$/, '')}</div>
+                                        <div class="table-stats">${table.column_count} columns</div>
+                                    </div>
+                                    <div>
+                                        <i class="fas fa-chevron-right"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                tablesHtml += '</div>';
+                
+                tablesList.innerHTML = tablesHtml;
+            }
+
+            function selectTable(tableName, element) {
+                // Validate that the table name ends with '__'
+                if (!tableName.endsWith('__')) {
+                    showAlert('Invalid table selection. Only tables ending with "__" are allowed.', 'warning');
+                    return;
+                }
+
+                // Remove previous selection
+                document.querySelectorAll('.table-card').forEach(card => {
+                    card.classList.remove('selected');
+                });
+                
+                // Add selection to clicked element
+                element.classList.add('selected');
+                
+                // Store selected table info
+                selectedTable = { table_name: tableName };
+                
+                // Enable proceed button
+                proceedToUploadBtn.disabled = false;
+            }
+
+            function handleFileSelection(file) {
+                // Validate file type
+                const allowedTypes = ['.csv', '.xlsx'];
+                const fileExtension = '.' + file.name.toLowerCase().split('.').pop();
+                
+                if (!allowedTypes.includes(fileExtension)) {
+                    showAlert('Please select a CSV (.csv) or Excel (.xlsx) file.', 'danger');
+                    return;
+                }
+                
+                currentFile = file;
+                previewDataBtn.style.display = 'inline-block';
+                showAlert(`File selected: ${file.name}`, 'info');
+            }
+
+            function previewData() {
+                if (!currentFile) {
+                    showAlert('No file selected', 'danger');
+                    return;
+                }
+
+                if (!selectedTable) {
+                    showAlert('Please select a table first', 'danger');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', currentFile);
+                formData.append('table_name', selectedTable.table_name);
+                formData.append('user_id', selectedUserId);
+
+                showLoading('Analyzing file structure...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch('{% url "preview-table-data-api" %}', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        sampleData = data.sample_data;
+                        populateDataPreview();
+                        document.getElementById('previewSection').style.display = 'block';
+                        showAlert(data.message, 'success');
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Preview failed: ${error.message}`, 'danger');
+                });
+            }
+
+            function populateDataPreview() {
+                const dataPreview = document.getElementById('dataPreview');
+                
+                if (!sampleData || sampleData.length === 0) {
+                    dataPreview.innerHTML = '<p class="text-muted">No data to preview</p>';
+                    return;
+                }
+
+                // Create table with headers and data rows
+                let tableHtml = '<table class="table table-striped table-sm table-bordered">';
+                
+                // Add headers row
+                tableHtml += '<thead class="table-dark"><tr>';
+                Object.keys(sampleData[0]).forEach(key => {
+                    tableHtml += `<th class="text-center">${key}</th>`;
+                });
+                tableHtml += '</tr></thead>';
+                
+                // Add data rows (limit to first 10 rows for preview)
+                tableHtml += '<tbody>';
+                sampleData.slice(0, 10).forEach(row => {
+                    tableHtml += '<tr>';
+                    Object.values(row).forEach(value => {
+                        const displayValue = value === null || value === undefined ? '' : String(value);
+                        tableHtml += `<td>${displayValue}</td>`;
+                    });
+                    tableHtml += '</tr>';
+                });
+                tableHtml += '</tbody></table>';
+                
+                if (sampleData.length > 10) {
+                    tableHtml += `<p class="text-muted small mt-2">Showing first 10 rows of ${sampleData.length} total rows</p>`;
+                }
+                
+                dataPreview.innerHTML = tableHtml;
+            }
+
+            function uploadDataToTable() {
+                if (!currentFile || !selectedTable) {
+                    showAlert('No file or table selected', 'danger');
+                    return;
+                }
+
+                // Validate that the selected table ends with '__'
+                if (!selectedTable.table_name.endsWith('__')) {
+                    showAlert('Invalid table selection. Only tables ending with "__" are allowed.', 'danger');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', currentFile);
+                formData.append('table_name', selectedTable.table_name);
+                formData.append('user_id', selectedUserId);
+
+                showLoading('Uploading data to table...');
+                clearAlerts();
+
+                const csrfToken = getCookie('csrftoken');
+
+                fetch('{% url "upload-table-data-api" %}', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.detail) {
+                                    errorMessage = errorData.detail;
+                                } else if (errorData.error) {
+                                    errorMessage = errorData.error;
+                                }
+                            } catch (e) {
+                                if (text) {
+                                    errorMessage = text;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    hideLoading();
+                    
+                    if (data.error) {
+                        showAlert(data.error, 'danger');
+                    } else {
+                        // Show success message
+                        showAlert(data.message, 'success');
+                        
+                        // Display column change information if any
+                        if (data.column_change_info && data.column_change_info.columns_changed.length > 0) {
+                            displayColumnChangeInfo(data.column_change_info);
+                        }
+                        
+                        // Show manual reset option instead of automatic reset
+                        showManualResetOption();
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    showAlert(`Upload failed: ${error.message}`, 'danger');
+                });
+            }
+
+            function displayColumnChangeInfo(changeInfo) {
+                let infoHtml = '<div class="alert alert-info column-change-info mt-3"><h6><i class="fas fa-database"></i> Table Structure Updated</h6>';
+                infoHtml += '<p class="mb-2">The following columns were automatically modified to accommodate your data:</p>';
+                infoHtml += '<div class="table-responsive"><table class="table table-sm table-bordered mb-0">';
+                infoHtml += '<thead class="table-light"><tr><th>Column</th><th>Previous Type</th><th>New Type</th><th>Reason</th><th>Status</th></tr></thead>';
+                infoHtml += '<tbody>';
+                
+                changeInfo.columns_changed.forEach(change => {
+                    const alterResult = changeInfo.alter_results.find(r => r.column === change.column);
+                    const status = alterResult ? alterResult.status : 'unknown';
+                    const statusClass = status === 'success' ? 'text-success' : 'text-danger';
+                    const statusIcon = status === 'success' ? '✓' : '✗';
+                    
+                    infoHtml += `<tr>
+                        <td><strong>${change.column}</strong></td>
+                        <td><code>${change.current_type}</code></td>
+                        <td><code>${change.new_type}</code></td>
+                        <td><small>${change.reason}</small></td>
+                        <td class="${statusClass}">${statusIcon} ${status}</td>
+                    </tr>`;
+                });
+                
+                infoHtml += '</tbody></table></div>';
+                infoHtml += '<p class="mb-0 mt-2"><small class="text-muted">All data has been preserved and converted to appropriate types.</small></p>';
+                infoHtml += '</div>';
+                
+                // Add the info to the alert container
+                const alertContainer = document.getElementById('alertContainer');
+                alertContainer.insertAdjacentHTML('beforeend', infoHtml);
+            }
+
+            function showStep(stepNumber) {
+                // Update step indicators
+                document.querySelectorAll('.step').forEach((step, index) => {
+                    step.classList.remove('active', 'completed');
+                    if (index + 1 < stepNumber) {
+                        step.classList.add('completed');
+                    } else if (index + 1 === stepNumber) {
+                        step.classList.add('active');
+                    }
+                });
+
+                // Show/hide sections
+                document.getElementById('userStep').style.display = stepNumber === 1 ? 'block' : 'none';
+                document.getElementById('tableStep').style.display = stepNumber === 2 ? 'block' : 'none';
+                document.getElementById('uploadStep').style.display = stepNumber === 3 ? 'block' : 'none';
+            }
+
+            function resetForm() {
+                currentFile = null;
+                selectedTable = null;
+                selectedUserId = null;
+                sampleData = null;
+                tableColumns = null;
+                fileInput.value = '';
+                previewDataBtn.style.display = 'none';
+                document.getElementById('previewSection').style.display = 'none';
+                document.getElementById('dataPreview').innerHTML = '';
+                document.getElementById('userIdInput').value = '';
+                document.getElementById('tablesList').innerHTML = '';
+                proceedToUploadBtn.disabled = true;
+                
+                // Reset data entry method selection
+                fileUploadMethod.checked = true;
+                fileUploadSection.style.display = 'block';
+                recordEntrySection.style.display = 'none';
+                document.getElementById('recordFieldsContainer').innerHTML = '';
+                addAnotherRecordBtn.style.display = 'none';
+                
+                // Remove any manually added buttons
+                const manualResetBtn = document.getElementById('manualResetBtn');
+                const viewDataBtn = document.getElementById('viewDataBtn');
+                if (manualResetBtn) manualResetBtn.parentElement.remove();
+                if (viewDataBtn) viewDataBtn.parentElement.remove();
+                
+                showStep(1);
+                clearAlerts();
+            }
+
+            function showLoading(text = 'Processing...') {
+                document.getElementById('loadingText').textContent = text;
+                loading.style.display = 'block';
+            }
+
+            function hideLoading() {
+                loading.style.display = 'none';
+            }
+
+            function showAlert(message, type) {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+                alertDiv.innerHTML = `
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                alertContainer.appendChild(alertDiv);
+            }
+
+            function clearAlerts() {
+                alertContainer.innerHTML = '';
+            }
+
+            function showManualResetOption() {
+                // Add a manual reset button after successful upload
+                const resetButtonHtml = `
+                    <div class="text-center mt-4">
+                        <button type="button" class="btn btn-outline-primary" id="manualResetBtn">
+                            <i class="fas fa-refresh"></i> Start New Upload
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary ms-2" id="viewDataBtn">
+                            <i class="fas fa-eye"></i> View Uploaded Data
+                        </button>
+                    </div>
+                `;
+                
+                // Add the buttons to the upload step
+                const uploadStep = document.getElementById('uploadStep');
+                uploadStep.insertAdjacentHTML('beforeend', resetButtonHtml);
+                
+                // Add event listeners for the new buttons
+                document.getElementById('manualResetBtn').addEventListener('click', () => {
+                    resetForm();
+                });
+                
+                document.getElementById('viewDataBtn').addEventListener('click', () => {
+                    // This could be expanded to show the uploaded data
+                    showAlert('Data viewing feature coming soon!', 'info');
+                });
+            }
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+
+            // Make selectTable function globally available
+            window.selectTable = selectTable;
+        });
+    </script>
+</body>
+</html>

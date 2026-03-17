@@ -1,0 +1,118 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Django
+*.log
+*.pot
+*.pyc
+db.sqlite3
+db.sqlite3-journal
+/media
+/staticfiles
+/static
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Frontend build
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Debug
+debug.log
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Documentation files (archived)
+*.docx
+*.pdf
+DataSphere*
+
+# Database files
+db.sqlite3*
+*.sqlite3
+*.sqlite
+
+# Environment variables (additional patterns)
+.env.local
+.env.*.local
+.env.production
+.env.staging
+
+
+# Local dev overrides
+datamigrationapi/local_settings.py
+local_settings.py
+*.sqlite3
+db.sqlite3
+
+# Frontend debug files
+frontend/build_errors.txt
+frontend/errors.txt
+frontend/tsc_output*.txt
+frontend/tsc_converted.txt
+frontend/deleted_func.txt
+
+# Python scripts that are one-time setup (shouldn't be edited per-commit)
+fix_settings.py
+create_general_schema.py
+
+# Editor sessions
+*.session.json
+.cursor/
+
+# OS files
+Thumbs.db
+.DS_Store
