@@ -28,6 +28,16 @@ from psycopg2.extras import Json
 
 logger = logging.getLogger(__name__)
 
+def _get_source_configs(config: dict[str, Any]) -> dict[str, Any]:
+    """Return source configs with tolerant key handling."""
+    source_configs = config.get("source_configs")
+    if isinstance(source_configs, dict):
+        return source_configs
+    source_configs = config.get("sourceConfigs")
+    if isinstance(source_configs, dict):
+        return source_configs
+    return {}
+
 class PushdownExecutionError(Exception):
     """Raised when SQL pushdown execution fails."""
     pass
@@ -103,9 +113,15 @@ async def execute_pipeline_pushdown(
             # PHASE 4: Enrich config with source metadata
             _last_phase = "PHASE_4_ENRICH_METADATA"
             _log_phase(_last_phase)
+            source_configs_dbg = _get_source_configs(config)
+            logger.info(
+                "[PUSHDOWN] Source config debug: total=%s keys(sample)=%s",
+                len(source_configs_dbg),
+                list(source_configs_dbg.keys())[:8],
+            )
             source_node_ids = {
                 n["id"] for n in nodes
-                if (n.get("type") or n.get("data", {}).get("type") or "").lower().strip() == "source"
+                if (n.get("type") or n.get("data", {}).get("type") or "").lower().strip().startswith("source")
             }
             customer_conn = _get_customer_connection_if_available(config)
             _enrich_config_with_metadata(customer_conn or db_connection, nodes, config)
@@ -118,7 +134,7 @@ async def execute_pipeline_pushdown(
             _ensure_source_metadata_for_plan(nodes, config)
             # Run filter pushdown so config has filter_pushdown_plan and pushed_filter_nodes
             try:
-                from planner.filter_optimizer import analyze_filter_pushdown
+                from planner.filter_pushdown import analyze_filter_pushdown
                 pushdown_result = analyze_filter_pushdown(nodes, edges, config)
                 if isinstance(pushdown_result, dict):
                     config["filter_pushdown_plan"] = pushdown_result.get("plan", {})
@@ -274,7 +290,28 @@ async def execute_pipeline_pushdown(
                                         logger.info(
                                             "[PUSHDOWN] Join failed (column mismatch), retrying with rewritten SQL"
                                         )
-                                        rowcount = _execute_sql(execution_conn, rewritten)
+                                        try:
+                                            rowcount = _execute_sql(execution_conn, rewritten)
+                                        except Exception as rewritten_err:
+                                            rewritten_err_str = str(rewritten_err)
+                                            if "specified more than once" in rewritten_err_str:
+                                                rewritten_unique = _rewrite_create_as_unique_output_columns(rewritten)
+                                                if rewritten_unique:
+                                                    logger.info(
+                                                        "[PUSHDOWN] Rewritten JOIN SQL had duplicate output columns; retrying with unique aliases"
+                                                    )
+                                                    rowcount = _execute_sql(execution_conn, rewritten_unique)
+                                                else:
+                                                    forced_alias_sql = _force_alias_create_as_select_columns(rewritten)
+                                                    if forced_alias_sql:
+                                                        logger.info(
+                                                            "[PUSHDOWN] Rewritten JOIN SQL still had duplicate outputs; forcing explicit unique aliases"
+                                                        )
+                                                        rowcount = _execute_sql(execution_conn, forced_alias_sql)
+                                                    else:
+                                                        raise
+                                            else:
+                                                raise
                                     else:
                                         raise
                                 else:
@@ -317,7 +354,24 @@ async def execute_pipeline_pushdown(
                                     else:
                                         raise
                             else:
-                                raise
+                                if "specified more than once" in err_str:
+                                    rewritten_unique = _rewrite_create_as_unique_output_columns(compiled_sql.sql)
+                                    if rewritten_unique:
+                                        logger.info(
+                                            "[PUSHDOWN] CREATE AS SELECT had duplicate output columns; retrying with unique aliases"
+                                        )
+                                        rowcount = _execute_sql(execution_conn, rewritten_unique)
+                                    else:
+                                        forced_alias_sql = _force_alias_create_as_select_columns(compiled_sql.sql)
+                                        if forced_alias_sql:
+                                            logger.info(
+                                                "[PUSHDOWN] CREATE AS SELECT duplicate outputs persisted; forcing explicit unique aliases"
+                                            )
+                                            rowcount = _execute_sql(execution_conn, forced_alias_sql)
+                                        else:
+                                            raise
+                                else:
+                                    raise
                 except Exception as query_err:
                     _last_phase = (
                         f"PHASE_9_LEVEL_{level_num}_QUERY_{query_idx + 1}_NODE_{current_node_id[:8] if current_node_id else 'n/a'}"
@@ -375,6 +429,7 @@ async def execute_pipeline_pushdown(
             for _idx, create_sql in enumerate(dest_creates):
                 if create_sql and create_sql.strip():
                     create_sql = _deduplicate_create_table_columns(create_sql)
+                    _ensure_target_schema(execution_conn, create_sql)
                     _execute_sql(execution_conn, create_sql)
             _log_phase(_last_phase, done=True)
         else:
@@ -390,6 +445,7 @@ async def execute_pipeline_pushdown(
                         create_sql = _generate_create_from_insert(execution_conn, insert_sql)
                         if create_sql:
                             create_sql = _deduplicate_create_table_columns(create_sql)
+                            _ensure_target_schema(execution_conn, create_sql)
                             _execute_sql(execution_conn, create_sql)
                             logger.info("[PUSHDOWN] Created destination table from INSERT fallback")
                 _log_phase(_last_phase, done=True)
@@ -408,6 +464,7 @@ async def execute_pipeline_pushdown(
             for insert_sql in final_ins:
                 if insert_sql and insert_sql.strip():
                     insert_sql = _deduplicate_insert_columns(insert_sql)
+                    _ensure_target_schema(execution_conn, insert_sql)
                     try:
                         rowcount += _execute_sql(execution_conn, insert_sql)
                     except Exception as insert_err:
@@ -433,7 +490,9 @@ async def execute_pipeline_pushdown(
                                     "[PUSHDOWN] Final INSERT failed (table missing), creating from staging and retrying"
                                 )
                                 create_sql = _deduplicate_create_table_columns(create_sql)
+                                _ensure_target_schema(execution_conn, create_sql)
                                 _execute_sql(execution_conn, create_sql)
+                                _ensure_target_schema(execution_conn, insert_sql)
                                 rowcount += _execute_sql(execution_conn, insert_sql)
                             else:
                                 raise
@@ -536,23 +595,53 @@ async def execute_pipeline_pushdown(
             customer_conn.close()
 
 def _get_destination_connection(config: dict[str, Any]):
-    """Get PostgreSQL connection to destination database."""
-    # Get first destination config
-    destination_configs = config.get("destination_configs", {})
+    """Get PostgreSQL connection to execution/destination database.
 
-    if not destination_configs:
+    Priority:
+    1) top-level connection_config / connectionConfig (customer DB execution target)
+    2) first entry from destination_configs / destinationConfigs
+    """
+    connection_config = (
+        config.get("connection_config")
+        or config.get("connectionConfig")
+    )
+
+    if not isinstance(connection_config, dict) or not connection_config:
+        destination_configs = (
+            config.get("destination_configs")
+            or config.get("destinationConfigs")
+            or {}
+        )
+        dest_config = None
+        if isinstance(destination_configs, dict) and destination_configs:
+            dest_config = next(iter(destination_configs.values()))
+        elif isinstance(destination_configs, list) and destination_configs:
+            dest_config = destination_configs[0]
+
+        if isinstance(dest_config, dict):
+            connection_config = (
+                dest_config.get("connection_config")
+                or dest_config.get("connectionConfig")
+                or dest_config
+            )
+
+    if not isinstance(connection_config, dict) or not connection_config:
         raise PushdownExecutionError("No destination configuration found")
 
-    # Get first destination
-    dest_config = next(iter(destination_configs.values()))
-    connection_config = dest_config.get("connection_config", {})
+    host = connection_config.get("host") or connection_config.get("hostname")
+    database = connection_config.get("database") or connection_config.get("dbname")
+    user = connection_config.get("user") or connection_config.get("username")
+    if not host or not database or not user:
+        raise PushdownExecutionError(
+            "Destination configuration is incomplete (host/database/user required)"
+        )
 
     # Connect
     conn = psycopg2.connect(
-        host=connection_config.get("host") or connection_config.get("hostname"),
+        host=host,
         port=int(connection_config.get("port", 5432)),
-        dbname=connection_config.get("database"),
-        user=connection_config.get("user") or connection_config.get("username"),
+        dbname=database,
+        user=user,
         password=connection_config.get("password", "")
     )
 
@@ -599,27 +688,49 @@ def _parse_create_table_as_select(sql: str) -> Optional[dict[str, Any]]:
 def _build_source_table_to_node_id_map(nodes: list[dict[str, Any]], config: dict[str, Any]) -> dict[tuple[str, str], str]:
     """Build (schema_name, table_name) -> source_node_id from nodes and config."""
     out = {}
-    source_configs = config.get("source_configs", {})
+    source_configs = _get_source_configs(config)
     for node in nodes:
         ntype = (node.get("type") or node.get("data", {}).get("type") or "").lower().strip()
-        if ntype != "source":
+        # Support variant node types like 'source-postgresql', 'source-mysql', 'sourcepostgresql', etc.
+        if not ntype or not ntype.startswith("source"):
             continue
         node_id = node.get("id")
         if not node_id:
             continue
         node_config = node.get("data", {}).get("config", {})
         sc = source_configs.get(node_id, {})
-        table = node_config.get("tableName") or sc.get("table_name")
-        schema = node_config.get("schema") or sc.get("schema_name") or "public"
+        table = (
+            node_config.get("tableName")
+            or node_config.get("table_name")
+            or sc.get("table_name")
+        )
+        schema = (
+            node_config.get("schema")
+            or node_config.get("schema_name")
+            or sc.get("schema_name")
+            or "public"
+        )
         if table:
+            # Store exact and normalized keys so lookup is robust to case/quote drift.
             out[(schema, table)] = node_id
+            out[(str(schema).strip('"').lower(), str(table).strip('"').lower())] = node_id
     return out
 
 def _get_source_connection(config: dict[str, Any], source_node_id: str):
     """Return a connection to the source DB for the given source node, or None."""
-    source_configs = config.get("source_configs", {})
+    source_configs = _get_source_configs(config)
     sc = source_configs.get(source_node_id, {})
-    conn_cfg = sc.get("connection_config") or sc.get("connectionConfig")
+    if not sc:
+        logger.warning(
+            "[PUSHDOWN] Source config missing for node=%s available_keys(sample)=%s",
+            source_node_id[:8],
+            list(source_configs.keys())[:8],
+        )
+    conn_cfg = (
+        sc.get("connection_config")
+        or sc.get("connectionConfig")
+        or sc  # tolerate flat shape: source_configs[node_id] = {host,port,...}
+    )
     if not conn_cfg:
         return None
     try:
@@ -633,7 +744,18 @@ def _get_source_connection(config: dict[str, Any], source_node_id: str):
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         return conn
     except Exception as e:
-        logger.debug(f"[PUSHDOWN] No source connection for node {source_node_id[:8]}: {e}")
+        redacted = {
+            "host": conn_cfg.get("host") or conn_cfg.get("hostname"),
+            "port": conn_cfg.get("port"),
+            "database": conn_cfg.get("database"),
+            "user": conn_cfg.get("user") or conn_cfg.get("username"),
+        }
+        logger.warning(
+            "[PUSHDOWN] Source connection open failed for node %s cfg=%s error=%s",
+            source_node_id[:8],
+            redacted,
+            e,
+        )
         return None
 
 # Common PostgreSQL type OIDs for cursor.description type_code -> type name
@@ -712,6 +834,23 @@ def _rewrite_select_for_actual_columns(
     if not from_rest.upper().startswith(qualified.upper()) and not from_rest.upper().startswith('"'):
         return None
 
+    # Rewrite quoted identifiers in the remainder (WHERE/ON/etc), not just the SELECT list.
+    # This fixes cases where the plan references unprefixed columns like "status"
+    # but the actual staging table only has prefixed columns like "31f72c84_status".
+    quoted_ident_pat = re.compile(r'"([^"]+)"')
+
+    def rewrite_quoted_identifiers(text: str) -> str:
+        def repl(match: re.Match[str]) -> str:
+            plan_col = match.group(1)
+            actual = find_actual(plan_col)
+            if actual and actual != plan_col:
+                return f'"{actual}"'
+            return match.group(0)
+
+        return quoted_ident_pat.sub(repl, text)
+
+    from_rest = rewrite_quoted_identifiers(from_rest)
+
     parts = []
     for item in re.split(r"\s*,\s*", select_list_str):
         as_m = re.match(r'"([^"]+)"\s+AS\s+"([^"]+)"', item.strip())
@@ -728,7 +867,7 @@ def _rewrite_select_for_actual_columns(
             parts.append(f'"{actual}" AS "{alias}"')
         else:
             logger.warning(
-                "[PUSHDOWN] Column '%s' not in source; skipping (alias=%s). Actual columns: %s",
+                "[PUSHDOWN] Column '%s' not in upstream relation; skipping (alias=%s). Actual columns: %s",
                 plan_col, alias, actual_columns[:10],
             )
     if not parts:
@@ -751,14 +890,47 @@ def _execute_source_staging_query(
     """
     parsed = _parse_create_table_as_select(sql)
     if not parsed:
+        logger.info("[PUSHDOWN] Source staging skipped: query is not parseable as CREATE TABLE AS SELECT source-read")
         return None
     from_key = (parsed["from_schema"], parsed["from_table"])
-    source_node_id = source_table_map.get(from_key)
+    norm_from_key = (
+        str(parsed["from_schema"]).strip('"').lower(),
+        str(parsed["from_table"]).strip('"').lower(),
+    )
+    source_node_id = source_table_map.get(from_key) or source_table_map.get(norm_from_key)
     if not source_node_id:
+        # Staging reads are expected here; only source tables should map to source_node_id.
+        if str(parsed.get("from_schema", "")).lower() == "staging_jobs":
+            logger.debug(
+                "[PUSHDOWN] Source map skip for staging read: requested=%s normalized=%s",
+                from_key,
+                norm_from_key,
+            )
+            return None
+        # Emit concise diagnostics to expose real source schema/table mismatches in logs.
+        sample_keys = list(source_table_map.keys())[:8]
+        logger.warning(
+            "[PUSHDOWN] Source map miss: requested=%s normalized=%s available_keys(sample)=%s",
+            from_key,
+            norm_from_key,
+            sample_keys,
+        )
         return None
     source_conn = _get_source_connection(config, source_node_id)
     if not source_conn:
-        logger.debug(f"[PUSHDOWN] No source connection for {from_key}, running on execution DB")
+        source_configs = _get_source_configs(config)
+        sc = source_configs.get(source_node_id, {})
+        has_conn_cfg = isinstance(sc, dict) and bool(
+            sc.get("connection_config") or sc.get("connectionConfig") or sc.get("host") or sc.get("hostname")
+        )
+        logger.warning(
+            "[PUSHDOWN] Source staging skipped: source connection missing for node=%s key=%s has_source_config=%s has_conn_cfg=%s available_source_keys(sample)=%s; running on execution DB",
+            source_node_id[:8],
+            from_key,
+            bool(sc),
+            has_conn_cfg,
+            list(source_configs.keys())[:8],
+        )
         return None
     create_schema = parsed["create_schema"]
     create_table = parsed["create_table"]
@@ -880,6 +1052,7 @@ def _split_sql_list(s: str) -> list:
     current = []
     depth = 0
     in_quote = False
+    in_single_quote = False
     i = 0
     n = len(s)
     while i < n:
@@ -890,8 +1063,24 @@ def _split_sql_list(s: str) -> list:
                 in_quote = False
             i += 1
             continue
+        if in_single_quote:
+            current.append(c)
+            if c == "'":
+                # Handle escaped '' inside single-quoted literals.
+                if i + 1 < n and s[i + 1] == "'":
+                    current.append(s[i + 1])
+                    i += 2
+                    continue
+                in_single_quote = False
+            i += 1
+            continue
         if c == '"':
             in_quote = True
+            current.append(c)
+            i += 1
+            continue
+        if c == "'":
+            in_single_quote = True
             current.append(c)
             i += 1
             continue
@@ -981,6 +1170,129 @@ def _deduplicate_create_table_columns(sql: str) -> str:
             sql = sql[: m.start(2)] + new_col_defs + sql[m.end(2) :]
     return sql
 
+def _rewrite_create_as_unique_output_columns(sql: str) -> Optional[str]:
+    """
+    Rewrite CREATE TABLE ... AS SELECT ... so SELECT output names are unique.
+    Prevents PostgreSQL error: column "X" specified more than once.
+    """
+    m = re.match(
+        r'(?is)^\s*CREATE\s+TABLE\s+"([^"]+)"\s*\.\s*"([^"]+)"\s+AS\s*(SELECT\s+.+)\s*$',
+        sql.strip(),
+    )
+    if not m:
+        return None
+    create_schema, create_table, select_sql = m.group(1), m.group(2), m.group(3)
+
+    sel_m = re.search(r'(?is)\bSELECT\s+(.*?)\s+FROM\s+', select_sql)
+    if not sel_m:
+        return None
+
+    select_list = sel_m.group(1).strip()
+    items = _split_sql_list(select_list)
+    if not items:
+        return None
+
+    seen: dict[str, int] = {}
+    changed = False
+    rewritten_items: list[str] = []
+
+    for item in items:
+        out_name = None
+        alias_m = re.search(r'(?is)\bAS\s+"([^"]+)"\s*$', item)
+        if alias_m:
+            out_name = alias_m.group(1)
+        else:
+            # Common implicit refs: "col" or alias."col"
+            qcol_m = re.search(r'(?is)(?:\b\w+\.)?"([^"]+)"\s*$', item)
+            if qcol_m:
+                out_name = qcol_m.group(1)
+
+        if out_name:
+            key = out_name.lower()
+            count = seen.get(key, 0)
+            if count > 0:
+                new_alias = f'{out_name}__dup{count + 1}'
+                changed = True
+                if alias_m:
+                    item = re.sub(
+                        r'(?is)\bAS\s+"([^"]+)"\s*$',
+                        f'AS "{new_alias}"',
+                        item,
+                        count=1,
+                    )
+                else:
+                    item = f'{item} AS "{new_alias}"'
+            seen[key] = count + 1
+
+        rewritten_items.append(item)
+
+    if not changed:
+        return None
+
+    new_select_list = ", ".join(rewritten_items)
+    rewritten_select = re.sub(
+        r'(?is)\bSELECT\s+.*?\s+FROM\s+',
+        f"SELECT {new_select_list} FROM ",
+        select_sql,
+        count=1,
+    )
+    return f'CREATE TABLE "{create_schema}"."{create_table}" AS\n{rewritten_select}'
+
+def _force_alias_create_as_select_columns(sql: str) -> Optional[str]:
+    """
+    Last-resort fallback for CREATE TABLE AS SELECT:
+    force every SELECT item to have a unique explicit alias.
+    """
+    m = re.match(
+        r'(?is)^\s*CREATE\s+TABLE\s+"([^"]+)"\s*\.\s*"([^"]+)"\s+AS\s*(SELECT\s+.+)\s*$',
+        sql.strip(),
+    )
+    if not m:
+        return None
+    create_schema, create_table, select_sql = m.group(1), m.group(2), m.group(3)
+
+    sel_m = re.search(r'(?is)\bSELECT\s+(.*?)\s+FROM\s+', select_sql)
+    if not sel_m:
+        return None
+    select_list = sel_m.group(1).strip()
+    items = _split_sql_list(select_list)
+    if not items:
+        return None
+
+    used: set[str] = set()
+    rewritten_items: list[str] = []
+    for idx, item in enumerate(items, start=1):
+        alias = None
+        alias_m = re.search(r'(?is)\bAS\s+"([^"]+)"\s*$', item)
+        if alias_m:
+            alias = alias_m.group(1)
+        else:
+            m_col = re.search(r'(?is)(?:\b\w+\.)?"([^"]+)"\s*$', item)
+            if m_col:
+                alias = m_col.group(1)
+            else:
+                m_cast = re.match(r'(?is)^\s*NULL\s*::\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$', item)
+                alias = m_cast.group(1) if m_cast else f"col_{idx}"
+            item = f'{item} AS "{alias}"'
+
+        base = alias
+        n = 1
+        while alias.lower() in used:
+            n += 1
+            alias = f"{base}__dup{n}"
+        used.add(alias.lower())
+        item = re.sub(r'(?is)\bAS\s+"([^"]+)"\s*$', f'AS "{alias}"', item, count=1)
+        rewritten_items.append(item)
+
+    new_select = ", ".join(rewritten_items)
+    rewritten_select = re.sub(
+        r'(?is)\bSELECT\s+.*?\s+FROM\s+',
+        f"SELECT {new_select} FROM ",
+        select_sql,
+        count=1,
+    )
+    return f'CREATE TABLE "{create_schema}"."{create_table}" AS\n{rewritten_select}'
+
 def _execute_sql(connection, sql: str) -> int:
     """
     Execute SQL statement.
@@ -996,6 +1308,66 @@ def _execute_sql(connection, sql: str) -> int:
         return rowcount
     finally:
         cursor.close()
+
+def _extract_target_schema(sql: str) -> Optional[str]:
+    """
+    Extract target schema from CREATE TABLE/INSERT INTO SQL.
+    Returns schema when SQL references "schema"."table"; else None.
+    """
+    if not isinstance(sql, str):
+        return None
+    m_create = re.search(r'(?i)\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"([^"]+)"\s*\.\s*"[^"]+"', sql)
+    if m_create:
+        return m_create.group(1)
+    m_insert = re.search(r'(?i)\bINSERT\s+INTO\s+"([^"]+)"\s*\.\s*"[^"]+"', sql)
+    if m_insert:
+        return m_insert.group(1)
+    return None
+
+def _ensure_target_schema(connection, sql: str) -> None:
+    """
+    Ensure referenced schemas exist before CREATE/INSERT.
+
+    Notes:
+      - The same SQL string may contain multiple CREATE TABLE / INSERT INTO statements.
+      - We must create every referenced schema (e.g. destination schema 'repository'),
+        not only the first one found.
+    """
+    if not isinstance(sql, str) or not sql.strip():
+        return
+
+    schema_set: set[str] = set()
+    schema_set.update(
+        re.findall(
+            r'(?i)\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"([^"]+)"\s*\.\s*"[^"]+"',
+            sql,
+        )
+    )
+    schema_set.update(
+        re.findall(
+            r'(?i)\bINSERT\s+INTO\s+"([^"]+)"\s*\.\s*"[^"]+"',
+            sql,
+        )
+    )
+    # DROP TABLE does not require schema creation, but it may show up in some combined SQL.
+    # Keeping it here is harmless and helps with robustness.
+    schema_set.update(
+        re.findall(
+            r'(?i)\bDROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+"([^"]+)"\s*\.\s*"[^"]+"',
+            sql,
+        )
+    )
+
+    schema_set = {s.strip() for s in schema_set if isinstance(s, str) and s.strip()}
+    if not schema_set:
+        return
+
+    cur = connection.cursor()
+    try:
+        for schema in sorted(schema_set):
+            cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+    finally:
+        cur.close()
 
 def _generate_create_from_insert(connection, insert_sql: str) -> Optional[str]:
     """
@@ -1158,12 +1530,31 @@ def _rewrite_join_for_actual_columns(
         """Return actual column name if it exists, else None (column should be dropped or NULL)."""
         if plan_col in actual_set:
             return plan_col
+        # Handle legacy "<full-uuid>__<col>" technical names by reducing to "<col>".
+        m_legacy = re.match(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}__(.+)$",
+            plan_col,
+        )
+        if m_legacy:
+            legacy_base = m_legacy.group(1)
+            if legacy_base in actual_set:
+                return legacy_base
+            suffix = "_" + legacy_base
+            for ac in actual_set:
+                if ac.lower().endswith(suffix.lower()):
+                    return ac
         # Strip node prefix (8 hex chars + underscore): 31f72c84_cmp_id -> cmp_id
         m = re.match(r"^[a-f0-9]{8}_(.+)$", plan_col, re.IGNORECASE)
         if m:
             base = m.group(1)
             if base in actual_set:
                 return base
+        # If plan_col is a base name like "cmp_id", try to find the prefixed staging column
+        # like "<node_prefix>_cmp_id" in actual staging.
+        suffix = "_" + plan_col
+        for ac in actual_set:
+            if ac.lower().endswith(suffix.lower()):
+                return ac
         return None
 
     def replacer(m: re.Match) -> str:
@@ -1177,11 +1568,96 @@ def _rewrite_join_for_actual_columns(
         if resolved is not None:
             return f'{alias}."{resolved}"'
         # Column does not exist in staging (e.g. calculated column missing); use NULL to avoid failure
-        return f'NULL::text AS "{col}"'
+        # IMPORTANT: don't use "AS" here; this replacement can occur inside an ON clause.
+        return 'NULL::text'
 
     # Replace l."col" and r."col" with resolved names (or NULL when column missing)
     pattern = rf'(\b{re.escape(left_alias)}\b|{re.escape(right_alias)}\b)\."([^"]+)"'
     rewritten = re.sub(pattern, replacer, rest)
+
+    # Safety: ensure SELECT output column names are unique after rewriting.
+    # Postgres can throw: "column \"X\" specified more than once" for CREATE TABLE AS
+    # when multiple SELECT items resolve to the same output column name.
+    def _split_top_level_commas(s: str) -> list[str]:
+        parts: list[str] = []
+        buf: list[str] = []
+        depth = 0
+        in_quotes = False
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if ch == '"' and (i == 0 or s[i - 1] != '\\'):
+                in_quotes = not in_quotes
+            if not in_quotes:
+                if ch == '(':
+                    depth += 1
+                elif ch == ')':
+                    depth = max(0, depth - 1)
+                elif ch == ',' and depth == 0:
+                    parts.append(''.join(buf).strip())
+                    buf = []
+                    i += 1
+                    continue
+            buf.append(ch)
+            i += 1
+        if buf:
+            parts.append(''.join(buf).strip())
+        return [p for p in parts if p]
+
+    def _ensure_unique_select_output(rewritten_sql: str) -> str:
+        select_m = re.search(r'(?is)\bSELECT\s+(.*?)\s+FROM\s+', rewritten_sql)
+        if not select_m:
+            return rewritten_sql
+        select_str = select_m.group(1).strip()
+        items = _split_top_level_commas(select_str)
+
+        seen: dict[str, int] = {}
+        new_items: list[str] = []
+        for item in items:
+            # Determine current output column name:
+            # - if explicit alias: ... AS "alias"
+            # - else for implicit refs like l."col" => "col"
+            alias_m = re.search(r'(?is)\bAS\s+"([^"]+)"', item)
+            out_name = alias_m.group(1) if alias_m else None
+            if not out_name:
+                m_col = re.search(
+                    rf'(?is)\b(?:{re.escape(left_alias)}|{re.escape(right_alias)})\."([^"]+)"',
+                    item,
+                )
+                out_name = m_col.group(1) if m_col else None
+            if not out_name:
+                # Expressions like NULL::text get implicit output name "text" in PostgreSQL.
+                # Multiple such items collide unless we alias duplicates.
+                m_cast = re.match(r'(?is)^\s*NULL\s*::\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$', item)
+                out_name = m_cast.group(1) if m_cast else None
+
+            if out_name:
+                count = seen.get(out_name, 0)
+                if count > 0:
+                    new_alias = f'{out_name}__dup{count + 1}'
+                    if alias_m:
+                        item = re.sub(
+                            r'(?is)\bAS\s+"([^"]+)"',
+                            f'AS "{new_alias}"',
+                            item,
+                            count=1,
+                        )
+                    else:
+                        item = f'{item} AS "{new_alias}"'
+                seen[out_name] = count + 1
+
+            new_items.append(item)
+
+        new_select = ', '.join(new_items)
+        return re.sub(
+            r'(?is)\bSELECT\s+.*?\s+FROM\s+',
+            f'SELECT {new_select} FROM ',
+            rewritten_sql,
+            count=1,
+        )
+
+    rewritten = _ensure_unique_select_output(rewritten)
+
     if rewritten == rest:
         return None
     result = f'CREATE TABLE "{create_m.group(1)}"."{create_m.group(2)}" AS\n{rewritten}'
@@ -1269,11 +1745,18 @@ def _rewrite_final_insert_for_actual_columns(
         return "NULL"
 
     # Build (dest_col, select_expr) only for dest_cols that exist in destination (exact or suffix match)
+    # Deduplicate after mapping so rewritten INSERT statements never contain
+    # duplicate destination columns (e.g. "_R_cmp_id" twice).
     new_pairs = []
+    seen_dest: set[str] = set()
     for dest_col, sel_col in zip(dest_cols, select_list):
         actual_dest = find_dest_col(dest_col)
         if actual_dest is None:
             continue
+        key = actual_dest.lower()
+        if key in seen_dest:
+            continue
+        seen_dest.add(key)
         new_pairs.append((actual_dest, find_staging_col(sel_col)))
     if not new_pairs:
         return None
@@ -1380,7 +1863,9 @@ def _load_node_metadata_from_cache(connection, canvas_id: int, config: dict[str,
                 continue
             if isinstance(columns, str):
                 columns = json.loads(columns)
-            if not isinstance(columns, list) or not columns:
+            # Allow empty column lists: we still want deterministic cache presence
+            # for downstream logic, and sources/ensure step will fill when needed.
+            if not isinstance(columns, list):
                 continue
             # For source nodes, enrich already set columns from actual table (LIMIT 0). Merge: keep only
             # columns that exist in the table and add technical_name from cache so we don't SELECT missing columns.
@@ -1398,7 +1883,14 @@ def _load_node_metadata_from_cache(connection, canvas_id: int, config: dict[str,
                     for nm in actual_names:
                         ce = cache_by_name.get(nm, {})
                         tn = ce.get("technical_name") or ce.get("name") or nm
-                        merged.append({"name": nm, "db_name": nm, "technical_name": tn})
+                        # Ensure destination CREATE uses display/business names.
+                        # For sources, business/display is the real db column name (nm).
+                        merged.append({
+                            "name": nm,
+                            "db_name": nm,
+                            "technical_name": tn,
+                            "business_name": nm,
+                        })
                     if merged:
                         config["node_output_metadata"][node_id] = {"columns": merged}
                     continue
@@ -1422,17 +1914,25 @@ def _backfill_source_metadata_from_destination(
     """
     if "node_output_metadata" not in config:
         return
-    source_configs = config.get("source_configs", {})
+    source_configs = _get_source_configs(config)
     for node in nodes:
         node_type = (node.get("type") or node.get("data", {}).get("type") or "").lower().strip()
-        if node_type != "source":
+        if not node_type.startswith("source"):
             continue
         node_id = node.get("id")
         if not node_id or node_id not in source_node_ids:
             continue
         node_data = node.get("data", {}).get("config", {})
-        table_name = node_data.get("tableName") or source_configs.get(node_id, {}).get("table_name")
-        schema_name = node_data.get("schema") or source_configs.get(node_id, {}).get("schema_name")
+        table_name = (
+            node_data.get("tableName")
+            or node_data.get("table_name")
+            or source_configs.get(node_id, {}).get("table_name")
+        )
+        schema_name = (
+            node_data.get("schema")
+            or node_data.get("schema_name")
+            or source_configs.get(node_id, {}).get("schema_name")
+        )
         if not table_name:
             continue
         qualified = f'"{schema_name}"."{table_name}"' if schema_name else f'"{table_name}"'
@@ -1460,7 +1960,13 @@ def _backfill_source_metadata_from_destination(
         merged = []
         for col_name in actual_columns:
             tn = cache_by_name.get(col_name, col_name)
-            merged.append({"name": col_name, "db_name": col_name, "technical_name": tn})
+            merged.append({
+                "name": col_name,
+                "db_name": col_name,
+                "technical_name": tn,
+                # Destination should persist using business/display names.
+                "business_name": col_name,
+            })
         if merged:
             config["node_output_metadata"][node_id] = {"columns": merged}
             logger.info(f"[PUSHDOWN] Backfilled source {node_id[:8]}... with {len(merged)} columns from destination")
@@ -1476,14 +1982,14 @@ def _enrich_config_with_metadata(connection, nodes: list[dict[str, Any]], config
     for node in nodes:
         # Extract node type
         node_type = (node.get("type") or node.get("data", {}).get("type") or "").lower().strip()
-        if node_type == "source":
+        if node_type.startswith("source"):
             node_id = node.get("id")
             if not node_id or node_id in config["node_output_metadata"]:
                 continue
 
             node_data = node.get("data", {}).get("config", {})
-            table_name = node_data.get("tableName")
-            schema_name = node_data.get("schema")
+            table_name = node_data.get("tableName") or node_data.get("table_name")
+            schema_name = node_data.get("schema") or node_data.get("schema_name")
 
             if not table_name:
                 continue
@@ -1542,7 +2048,7 @@ def _ensure_source_metadata_for_plan(nodes: list[dict[str, Any]], config: dict[s
         config["node_output_metadata"] = {}
     for node in nodes:
         node_type = (node.get("type") or node.get("data", {}).get("type") or "").lower().strip()
-        if node_type != "source":
+        if not node_type.startswith("source"):
             continue
         node_id = node.get("id")
         if not node_id:
@@ -1550,6 +2056,19 @@ def _ensure_source_metadata_for_plan(nodes: list[dict[str, Any]], config: dict[s
         prefix = node_id[:8]
         meta = config["node_output_metadata"].get(node_id, {})
         columns = meta.get("columns") if isinstance(meta, dict) else None
+        if not columns or not isinstance(columns, list):
+            node_data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
+            cfg = node_data.get("config", {}) if isinstance(node_data.get("config"), dict) else {}
+            fallback_columns = []
+            if isinstance(cfg.get("columns"), list):
+                fallback_columns = cfg.get("columns") or []
+            elif isinstance(node_data.get("columns"), list):
+                fallback_columns = node_data.get("columns") or []
+            else:
+                out_meta = node_data.get("output_metadata", {})
+                if isinstance(out_meta, dict) and isinstance(out_meta.get("columns"), list):
+                    fallback_columns = out_meta.get("columns") or []
+            columns = fallback_columns
         if not columns or not isinstance(columns, list):
             continue
         normalized = []
@@ -1561,10 +2080,18 @@ def _ensure_source_metadata_for_plan(nodes: list[dict[str, Any]], config: dict[s
             tech_name = col.get("technical_name") or (f"{prefix}_{db_name}" if db_name else None)
             if not tech_name and name:
                 tech_name = f"{prefix}_{name}"
+            # Normalize inconsistent source technical-name formats:
+            # - observed bad: "<full-node-uuid>__<col>" (full uuid + double underscore)
+            # - desired: "{node_id[:8]}_{db_name}" (8-char prefix + single underscore)
+            if isinstance(tech_name, str) and tech_name and node_id and node_id in tech_name and db_name:
+                tech_name = f"{prefix}_{db_name}"
             normalized.append({
                 "name": name or db_name,
                 "db_name": db_name or name,
                 "technical_name": tech_name or (f"{prefix}_{name}" if name else ""),
+                # For destination column creation, prefer business/display names.
+                # For 8hex_col technical keys, db_name is already derived as the real column.
+                "business_name": db_name or name,
             })
         if normalized:
             config["node_output_metadata"][node_id] = {"columns": normalized}

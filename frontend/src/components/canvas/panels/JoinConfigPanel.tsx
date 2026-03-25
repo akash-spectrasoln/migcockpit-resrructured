@@ -247,7 +247,7 @@ export const JoinConfigPanel: React.FC<JoinConfigPanelProps> = ({
     
     // If saved output columns exist, normalize their aliases to use fixed convention
     if (savedOutputColumns && savedOutputColumns.length > 0) {
-      const normalizedColumns = savedOutputColumns.map(col => {
+      let normalizedColumns = savedOutputColumns.map(col => {
         // Recalculate outputName using new prefix logic for ambiguous fields
         const outputName = col.outputName || getOutputName(col.column, col.source, leftColumnNames, rightColumnNames)
         return {
@@ -256,6 +256,13 @@ export const JoinConfigPanel: React.FC<JoinConfigPanelProps> = ({
           outputName: outputName
         }
       })
+
+      // Legacy-heal: some saved configs ended up with only 0/1 included column by default.
+      // Join should include all columns unless the user explicitly deselects them.
+      const includedCount = normalizedColumns.filter(col => col.included !== false).length
+      if (normalizedColumns.length > 1 && includedCount <= 1) {
+        normalizedColumns = normalizedColumns.map(col => ({ ...col, included: true }))
+      }
       setOutputColumns(normalizedColumns)
       
       // Initialize order from saved columns (only included ones)
@@ -591,7 +598,8 @@ export const JoinConfigPanel: React.FC<JoinConfigPanelProps> = ({
           }
         })
 
-        // Add any columns from left/right that are not yet in output (e.g. newly included upstream) — show unchecked
+        // Add any columns from left/right that are not yet in output.
+        // Default include to avoid accidentally collapsing join output to 1 column.
         leftColumns.forEach((col) => {
           const key = `left:${col}`
           if (!existingKeys.has(key)) {
@@ -601,7 +609,7 @@ export const JoinConfigPanel: React.FC<JoinConfigPanelProps> = ({
               column: col,
               alias: `${LEFT_ALIAS}.${col}`,
               outputName: getOutputName(col, 'left', leftCols, rightCols),
-              included: false,
+              included: true,
               datatype: metadata.datatype,
               nullable: metadata.nullable,
               isPrimaryKey: metadata.isPrimaryKey,
@@ -618,7 +626,7 @@ export const JoinConfigPanel: React.FC<JoinConfigPanelProps> = ({
               column: col,
               alias: `${RIGHT_ALIAS}.${col}`,
               outputName: getOutputName(col, 'right', leftCols, rightCols),
-              included: false,
+              included: true,
               datatype: metadata.datatype,
               nullable: metadata.nullable,
               isPrimaryKey: metadata.isPrimaryKey,
@@ -677,8 +685,34 @@ export const JoinConfigPanel: React.FC<JoinConfigPanelProps> = ({
     const compiledInputNode = compiledGraph.nodes[tableNode.id]
     if (!compiledInputNode) return
 
-    // Since this node is an input to us, its outputSchema is our input schema for that side
-    const schema = compiledInputNode.outputSchema || []
+    // Primary source: compiled pipeline output schema
+    const compiledSchema = compiledInputNode.outputSchema || []
+    // Fallback: node-carried metadata can be fresher than compiled schema in some UI states
+    const metaSchema = ((tableNode as any)?.data?.output_metadata?.columns || []) as any[]
+    const configSchema = (((tableNode as any)?.data?.config?.columns || []) as any[])
+
+    // Merge all candidates by display key so join panel doesn't collapse to a single derived column.
+    const mergedByKey = new Map<string, any>()
+    const pushCols = (arr: any[]) => {
+      arr.forEach((col: any) => {
+        const key =
+          col?.outputName ||
+          col?.business_name ||
+          col?.name ||
+          col?.column_name ||
+          col?.column ||
+          col?.db_name ||
+          col?.technical_name
+        if (!key) return
+        if (!mergedByKey.has(String(key))) {
+          mergedByKey.set(String(key), col)
+        }
+      })
+    }
+    pushCols(compiledSchema as any[])
+    pushCols(metaSchema)
+    pushCols(configSchema)
+    const schema = Array.from(mergedByKey.values())
 
     const columnNames: string[] = []
     const technicalNames: string[] = []

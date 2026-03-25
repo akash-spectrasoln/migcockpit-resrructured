@@ -136,7 +136,10 @@ def generate_all_node_metadata(
                     canvas_id=canvas_id
                 )
 
-                if columns_metadata:
+                # Persist a cache row for every node we process, even if the
+                # column list is empty. This makes downstream cache loading
+                # deterministic and avoids "missing node row" edge cases.
+                if columns_metadata is not None:
                     # Save to database
                     _save_metadata_to_db(
                         cursor=cursor,
@@ -149,9 +152,9 @@ def generate_all_node_metadata(
                     )
 
                     metadata_count += 1
-                    logger.debug(f"[METADATA] ✓ Saved {len(columns_metadata)} columns for node {node_id[:8]}")
-                else:
-                    logger.debug(f"[METADATA] ⚠ No metadata generated for node {node_id[:8]}")
+                    logger.debug(
+                        f"[METADATA] ✓ Saved {len(columns_metadata)} columns for node {node_id[:8]}"
+                    )
 
             except Exception as e:
                 logger.warning(f"[METADATA] Failed to generate metadata for node {node_id[:8]}: {e}")
@@ -261,6 +264,47 @@ def _generate_source_metadata(node_id: str, node_config: dict[str, Any], cursor:
 
     if not schema:
         schema = 'public'
+
+    # Repository-backed "source" nodes live in the customer DB directly under
+    # the `repository` schema, and they do not have a row in GENERAL.source.
+    #
+    # In the frontend we represent these nodes with sourceId = -1 and/or
+    # isRepository=true.
+    is_repository_node = False
+    if source_id is not None:
+        try:
+            is_repository_node = int(source_id) == -1
+        except (TypeError, ValueError):
+            is_repository_node = False
+    if node_config.get("isRepository") is True:
+        is_repository_node = True
+
+    if is_repository_node:
+        if not schema or schema == "public":
+            schema = "repository"
+
+        # Fetch column definitions directly from the customer DB.
+        cursor.execute(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position
+            """,
+            (schema, table),
+        )
+
+        columns = []
+        for col_name, data_type in cursor.fetchall():
+            columns.append({
+                "business_name": col_name,
+                "technical_name": f"{node_id[:8]}_{col_name}",
+                "db_name": col_name,
+                "base": node_id,
+                "datatype": data_type,
+                "source": "base",
+            })
+        return columns
 
     # If we don't have a sourceId, we can't connect to get real columns
     if not source_id:

@@ -29,10 +29,13 @@ interface TableDataPanelProps {
   sourceId?: number
   tableName?: string
   schema?: string
+  isRepository?: boolean
   nodeId?: string
   nodes?: any[]
   edges?: any[]
   directFilterConditions?: any[] // Conditions for direct filter mode
+  directFilterExpression?: string // Expression for direct filter mode
+  directFilterMode?: 'builder' | 'expression'
   canvasId?: number // Required for preview cache
   onClose: () => void
 }
@@ -45,13 +48,17 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
   sourceId,
   tableName,
   schema,
+  isRepository,
   nodeId,
   nodes,
   edges,
   directFilterConditions,
+  directFilterExpression,
+  directFilterMode,
   canvasId,
   onClose,
 }) => {
+  const useRepository = !!isRepository || sourceId === -1 || schema === 'repository'
   const [data, setData] = useState<TableRow[]>([])
   const [columns, setColumns] = useState<string[]>([])
   const [columnLineage, setColumnLineage] = useState<Record<string, { origin_type?: string; source_table?: string; origin_branch?: string; is_calculated?: boolean; expression?: string; source_table_left?: string; source_table_right?: string }>>({})
@@ -487,7 +494,10 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
     // 3. Nodes array changed (node clicked/interacted) and we have a filter node with conditions
     //    - This handles clicking the same filter node again
     // 4. Filter node is selected with conditions (force execution to show filtered results)
-    const hasFilterConditions = isFilterNode && selectedNode?.data?.config?.conditions?.length > 0
+    const hasFilterConditions = isFilterNode && (
+      selectedNode?.data?.config?.conditions?.length > 0 ||
+      !!String(selectedNode?.data?.config?.expression || '').trim()
+    )
     const isFirstTimeFilterNode = isFilterNode && hasFilterConditions &&
       (prevNodeIdRef.current === undefined || prevNodeIdRef.current !== nodeId)
 
@@ -527,7 +537,9 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
           const parentType = parentNode?.data?.type
 
           if (node && node.data.type === 'filter') {
-            const hasConditions = node.data.config?.conditions?.length > 0
+            const hasConditions =
+              node.data.config?.conditions?.length > 0 ||
+              !!String(node.data.config?.expression || '').trim()
 
             // If parent is a JOIN / transform/ aggregate node, execute via pipeline so the filter
             // applies on the parent's output (e.g., joined data)
@@ -617,9 +629,12 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
           } else if (node && node.data.type === 'source') {
             // For source nodes, check if they have embedded filter conditions
             const sourceConfig = node.data.config
-            const hasEmbeddedFilter = sourceConfig?.isFiltered || (sourceConfig?.conditions && sourceConfig.conditions.length > 0)
+            const hasEmbeddedFilter =
+              sourceConfig?.isFiltered ||
+              (sourceConfig?.conditions && sourceConfig.conditions.length > 0) ||
+              (sourceConfig?.expression && String(sourceConfig.expression).trim())
 
-            if (hasEmbeddedFilter && sourceConfig?.conditions && sourceConfig.conditions.length > 0) {
+            if (hasEmbeddedFilter) {
               // Source node has embedded filter - apply it
               setData([])
               setColumns([])
@@ -679,8 +694,15 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
             }
           }
         } else if (sourceId && tableName && !nodeId) {
-          // Direct filter mode - execute filter with directFilterConditions
-          if (directFilterConditions && directFilterConditions.length > 0) {
+          // Direct filter mode - execute either builder conditions or expression filter.
+          const hasDirectFilterExpression =
+            directFilterMode === 'expression' && !!String(directFilterExpression || '').trim()
+          const hasDirectFilterConditions =
+            directFilterMode !== 'expression' &&
+            Array.isArray(directFilterConditions) &&
+            directFilterConditions.length > 0
+
+          if (hasDirectFilterConditions || hasDirectFilterExpression) {
             const requestContext = previewContextRef.current
             setData([])
             setColumns([])
@@ -690,16 +712,27 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
               ; (async () => {
                 try {
                   const { api } = await import('../../../services/api')
-                  const response = await api.post(
-                    `/api/api-customer/sources/${sourceId}/filter/`,
-                    {
-                      table_name: tableName,
-                      schema: schema || '',
-                      conditions: directFilterConditions,
-                      page: 1,
-                      page_size: pageSize,
-                    }
-                  )
+                  const directFilterPayload = hasDirectFilterExpression
+                    ? { type: 'expression', expression: String(directFilterExpression || '').trim() }
+                    : (directFilterConditions || [])
+                  const response = useRepository
+                    ? await api.post('/api/api-customer/repository/filter/', {
+                        table_name: tableName,
+                        schema: schema || 'repository',
+                        conditions: directFilterPayload,
+                        page: 1,
+                        page_size: pageSize,
+                      })
+                    : await api.post(
+                        `/api/api-customer/sources/${sourceId}/filter/`,
+                        {
+                          table_name: tableName,
+                          schema: schema || '',
+                          conditions: directFilterPayload,
+                          page: 1,
+                          page_size: pageSize,
+                        }
+                      )
 
                   const { rows, columns: tableColumns, has_more } = response.data
                   if (requestContext !== previewContextRef.current) return
@@ -739,7 +772,7 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
       isExecutingRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceId, tableName, schema, nodeId, nodes, edges, directFilterConditions])
+  }, [sourceId, tableName, schema, nodeId, nodes, edges, directFilterConditions, directFilterExpression, directFilterMode])
 
   // SEPARATE EFFECT: Re-sort columns and data when projection order changes (without re-fetching)
   // This ensures the preview table updates immediately when Move buttons are clicked
@@ -809,12 +842,9 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
       return
     }
 
-    // Validate conditions exist and are valid
-    if (!filterNode.data.config?.conditions || filterNode.data.config.conditions.length === 0) {
-      setError('Filter node has no conditions defined')
-      setLoading(false)
-      return
-    }
+    const filterMode = filterNode?.data?.config?.mode || 'builder'
+    const filterExpression = String(filterNode?.data?.config?.expression || '').trim()
+    const rawConditions = filterNode?.data?.config?.conditions || []
 
     // Clear any existing data before executing filter (unless appending)
     if (!append) {
@@ -833,7 +863,7 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
       const parentNode = inputEdge && nodes && Array.isArray(nodes) ? nodes.find((n: any) => n.id === inputEdge.source) : null
       const parentType = parentNode?.data?.type
 
-      const cleanedConditions = (filterNode.data.config?.conditions || [])
+      const cleanedConditions = (rawConditions || [])
         .filter((c: any) => c.column && c.operator) // Filter out invalid conditions
         .map((c: any) => {
           let columnName = c.column
@@ -881,8 +911,15 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
           }
         })
 
-      // Validate we have at least one valid condition
-      if (cleanedConditions.length === 0) {
+      let filterPayload: any = cleanedConditions
+      if (filterMode === 'expression') {
+        if (!filterExpression) {
+          setError('Filter expression is empty')
+          setLoading(false)
+          return
+        }
+        filterPayload = { type: 'expression', expression: filterExpression }
+      } else if (cleanedConditions.length === 0) {
         setError('No valid filter conditions found')
         setLoading(false)
         return
@@ -892,22 +929,31 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
       console.log('Sending filter request:', {
         table_name: tableName,
         schema: schema || '',
-        conditions: cleanedConditions,
+        mode: filterMode,
+        conditions: filterPayload,
         page: pageNum,
         page_size: pageSize,
       })
 
       // Backend expects 'conditions' as a flat array, not 'filters' as nested object
-      const response = await api.post(
-        `/api/api-customer/sources/${effectiveSourceId}/filter/`,
-        {
-          table_name: effectiveTableName,
-          schema: effectiveSchema || '',
-          conditions: cleanedConditions,  // Send conditions array directly
-          page: pageNum,
-          page_size: pageSize,
-        }
-      )
+      const response = (useRepository || effectiveSourceId === -1)
+        ? await api.post('/api/api-customer/repository/filter/', {
+            table_name: effectiveTableName,
+            schema: effectiveSchema || 'repository',
+            conditions: filterPayload,
+            page: pageNum,
+            page_size: pageSize,
+          })
+        : await api.post(
+            `/api/api-customer/sources/${effectiveSourceId}/filter/`,
+            {
+              table_name: effectiveTableName,
+              schema: effectiveSchema || '',
+              conditions: filterPayload,
+              page: pageNum,
+              page_size: pageSize,
+            }
+          )
 
       const { rows, columns: tableColumns, has_more } = response.data
       if (requestContext !== previewContextRef.current) return
@@ -955,7 +1001,14 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
     setError(null)
     try {
       const { sourceTableApi } = await import('../../../services/api')
-      const response = await sourceTableApi.getTableData(sourceId, tableName, schema || '', pageNum, pageSize)
+      const response = useRepository
+        ? await sourceTableApi.repositoryTableData({
+            table_name: tableName,
+            schema: schema || 'repository',
+            page: pageNum,
+            page_size: pageSize,
+          })
+        : await sourceTableApi.getTableData(sourceId, tableName, schema || '', pageNum, pageSize)
 
       // sourceTableApi.getTableData already returns the unwrapped body
       const { rows, columns: tableColumns, has_more } = response
@@ -989,8 +1042,16 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
       // Use the appropriate query method based on node type
       if (nodeId && nodes && edges) {
         const filterNode = nodes.find((n: any) => n.id === nodeId)
-        if (filterNode && filterNode.data.type === 'filter' &&
-          filterNode.data.config?.conditions?.length > 0 && sourceId && tableName) {
+        if (
+          filterNode &&
+          filterNode.data.type === 'filter' &&
+          (
+            filterNode.data.config?.conditions?.length > 0 ||
+            !!String(filterNode.data.config?.expression || '').trim()
+          ) &&
+          sourceId &&
+          tableName
+        ) {
           // For filter nodes, execute filter query with next page
           executeFilterQuery(filterNode, page + 1, true)
         } else {
@@ -1006,8 +1067,16 @@ export const TableDataPanel: React.FC<TableDataPanelProps> = ({
     if (nodeId && nodes && edges) {
       const filterNode = nodes.find((n: any) => n.id === nodeId)
       // If it's a filter node with conditions, execute filter query
-      if (filterNode && filterNode.data.type === 'filter' &&
-        filterNode.data.config?.conditions?.length > 0 && sourceId && tableName) {
+      if (
+        filterNode &&
+        filterNode.data.type === 'filter' &&
+        (
+          filterNode.data.config?.conditions?.length > 0 ||
+          !!String(filterNode.data.config?.expression || '').trim()
+        ) &&
+        sourceId &&
+        tableName
+      ) {
         executeFilterQuery(filterNode)
       } else {
         // Force refresh bypasses cache

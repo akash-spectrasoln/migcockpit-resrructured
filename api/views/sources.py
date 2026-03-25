@@ -6,11 +6,13 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 import time
 
 from django.conf import settings
 import httpx
 import psycopg2
+from psycopg2 import sql as psql
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -37,6 +39,56 @@ from api.utils.helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _normalize_condition_column(col: str) -> str:
+    """
+    Best-effort mapping of incoming filter condition column names to the actual
+    repository table column names.
+
+    The frontend may send technical names produced by the pipeline, e.g.:
+      - '<uuid>__dst_schema'
+      - '<8hex>_dst_schema'
+      - 'table.dst_schema'
+      - '_L_created_at' / '_R_created_at'
+    Repository tables in `cust_db.repository` do not contain these technical
+    prefixes, so we normalize back to the real db column name.
+    """
+    if not isinstance(col, str):
+        return col
+
+    c = col.strip()
+    if not c:
+        return c
+
+    # Strip type suffix: "col (int)" -> "col"
+    c = re.sub(r"\s*\([^)]*\)\s*$", "", c).strip()
+
+    # "table.col" -> "col"
+    if "." in c:
+        c = c.split(".")[-1].strip()
+
+    # "_L_created_at" / "_R_created_at" -> "created_at"
+    if c.startswith("_L_") or c.startswith("_R_"):
+        c = c[3:].strip()
+
+    # <hyphenated-uuid>__<real_col> -> <real_col>
+    uuid_hyphen_m = re.match(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}__(.+)$",
+        c,
+    )
+    if uuid_hyphen_m:
+        return uuid_hyphen_m.group(1)
+
+    # <8hex>_<real_col> -> <real_col>
+    uuid8_m = re.match(r"^[0-9a-fA-F]{8}_(.+)$", c)
+    if uuid8_m:
+        return uuid8_m.group(1)
+
+    # Fallback: if still contains '__', keep suffix after first '__'
+    if "__" in c:
+        return c.split("__", 1)[1].strip()
+
+    return c
 
 # ── Server-side table list cache ──────────────────────────────────────────────
 # Keyed by (source_id, cursor or '', search, limit).
@@ -1720,6 +1772,260 @@ class SourceTableSelectionView(APIView):
                 {"error": f"Failed to fetch selected tables: {e!s}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class RepositorySchemaTablesView(APIView):
+    """
+    List tables from customer DB `repository` schema.
+    Used by left sidebar Repository section.
+    """
+    authentication_classes = [JWTCookieAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            search = (request.query_params.get('search') or '').strip().lower()
+            user = request.user
+            customer = ensure_user_has_customer(user)
+
+            conn = psycopg2.connect(
+                host=settings.DATABASES['default']['HOST'],
+                port=settings.DATABASES['default']['PORT'],
+                user=settings.DATABASES['default']['USER'],
+                password=settings.DATABASES['default']['PASSWORD'],
+                database=customer.cust_db
+            )
+            conn.autocommit = True
+            cursor = conn.cursor()
+
+            if search:
+                cursor.execute(
+                    """
+                    SELECT table_schema, table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'repository'
+                      AND table_type = 'BASE TABLE'
+                      AND LOWER(table_name) LIKE %s
+                    ORDER BY table_name
+                    """,
+                    (f"%{search}%",),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT table_schema, table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'repository'
+                      AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+                    """
+                )
+
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            tables = [{"schema": r[0], "table_name": r[1]} for r in rows]
+            return Response({"tables": tables, "count": len(tables)}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error("Failed to fetch repository schema tables: %s", e, exc_info=True)
+            return Response(
+                {"error": f"Failed to fetch repository tables: {e!s}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class RepositoryColumnsView(APIView):
+    """Get columns for a table in customer DB repository schema."""
+    authentication_classes = [JWTCookieAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            table_name = (request.query_params.get('table_name') or '').strip()
+            schema = (request.query_params.get('schema') or 'repository').strip()
+            if not table_name:
+                return Response({"error": "table_name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            customer = ensure_user_has_customer(request.user)
+            conn = psycopg2.connect(
+                host=settings.DATABASES['default']['HOST'],
+                port=settings.DATABASES['default']['PORT'],
+                user=settings.DATABASES['default']['USER'],
+                password=settings.DATABASES['default']['PASSWORD'],
+                database=customer.cust_db
+            )
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position
+                """,
+                (schema, table_name),
+            )
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+
+            columns = [
+                {
+                    "name": r[0],
+                    "column_name": r[0],
+                    "datatype": str(r[1]).upper(),
+                    "nullable": str(r[2]).upper() == "YES",
+                }
+                for r in rows
+            ]
+            return Response({"columns": columns, "count": len(columns)}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error("Failed to fetch repository columns: %s", e, exc_info=True)
+            return Response({"error": f"Failed to fetch repository columns: {e!s}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class RepositoryTableDataView(APIView):
+    """Get paginated rows for repository schema table in customer DB."""
+    authentication_classes = [JWTCookieAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            table_name = (request.query_params.get('table_name') or '').strip()
+            schema = (request.query_params.get('schema') or 'repository').strip()
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 50))
+            if not table_name:
+                return Response({"error": "table_name is required"}, status=status.HTTP_400_BAD_REQUEST)
+            offset = max(0, (page - 1) * page_size)
+
+            customer = ensure_user_has_customer(request.user)
+            conn = psycopg2.connect(
+                host=settings.DATABASES['default']['HOST'],
+                port=settings.DATABASES['default']['PORT'],
+                user=settings.DATABASES['default']['USER'],
+                password=settings.DATABASES['default']['PASSWORD'],
+                database=customer.cust_db
+            )
+            conn.autocommit = True
+            cur = conn.cursor()
+
+            q = psql.SQL("SELECT * FROM {}.{} LIMIT %s OFFSET %s").format(
+                psql.Identifier(schema),
+                psql.Identifier(table_name),
+            )
+            cur.execute(q, (page_size, offset))
+            rows = cur.fetchall()
+            cols = [d[0] for d in (cur.description or [])]
+
+            qc = psql.SQL("SELECT COUNT(*) FROM {}.{}").format(
+                psql.Identifier(schema),
+                psql.Identifier(table_name),
+            )
+            cur.execute(qc)
+            total = int(cur.fetchone()[0])
+            cur.close()
+            conn.close()
+
+            out_rows = [dict(zip(cols, r)) for r in rows]
+            has_more = (offset + len(out_rows)) < total
+            return Response(
+                {"rows": out_rows, "columns": cols, "has_more": has_more, "total": total},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error("Failed to fetch repository table data: %s", e, exc_info=True)
+            return Response({"error": f"Failed to fetch repository table data: {e!s}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class RepositoryFilterExecutionView(APIView):
+    """Execute filter conditions on repository schema table in customer DB."""
+    authentication_classes = [JWTCookieAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            table_name = (request.data.get('table_name') or '').strip()
+            schema = (request.data.get('schema') or 'repository').strip()
+            conditions = request.data.get('conditions') or []
+            is_expression_payload = isinstance(conditions, dict) and (conditions.get('type') == 'expression')
+            expression_text = str((conditions or {}).get('expression', '')).strip() if is_expression_payload else ''
+            page = int(request.data.get('page', 1))
+            page_size = int(request.data.get('page_size', 50))
+            if not table_name:
+                return Response({"error": "table_name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            where_parts = []
+            params: list = []
+            if is_expression_payload:
+                if not expression_text:
+                    return Response(
+                        {"error": "expression is required when conditions.type = 'expression'"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                where_sql = expression_text
+            else:
+                for idx, cond in enumerate(conditions):
+                    col = _normalize_condition_column((cond.get('column') or '').strip())
+                    op = (cond.get('operator') or '=').upper().strip()
+                    val = cond.get('value')
+                    logical = (cond.get('logicalOperator') or 'AND').upper().strip()
+                    if not col:
+                        continue
+                    prefix = '' if idx == 0 else f' {logical} '
+                    if op in ('IS NULL', 'IS NOT NULL'):
+                        where_parts.append(f'{prefix}"{col}" {op}')
+                    elif op in ('IN', 'NOT IN') and isinstance(val, list) and val:
+                        placeholders = ', '.join(['%s'] * len(val))
+                        where_parts.append(f'{prefix}"{col}" {op} ({placeholders})')
+                        params.extend(val)
+                    elif op == 'BETWEEN' and isinstance(val, list) and len(val) == 2:
+                        where_parts.append(f'{prefix}"{col}" BETWEEN %s AND %s')
+                        params.extend([val[0], val[1]])
+                    else:
+                        where_parts.append(f'{prefix}"{col}" {op} %s')
+                        params.append(val)
+
+                where_sql = ''.join(where_parts).strip()
+            offset = max(0, (page - 1) * page_size)
+
+            customer = ensure_user_has_customer(request.user)
+            conn = psycopg2.connect(
+                host=settings.DATABASES['default']['HOST'],
+                port=settings.DATABASES['default']['PORT'],
+                user=settings.DATABASES['default']['USER'],
+                password=settings.DATABASES['default']['PASSWORD'],
+                database=customer.cust_db
+            )
+            conn.autocommit = True
+            cur = conn.cursor()
+
+            base = psql.SQL("FROM {}.{}").format(psql.Identifier(schema), psql.Identifier(table_name))
+            if where_sql:
+                data_sql = psql.SQL("SELECT * ") + base + psql.SQL(" WHERE ") + psql.SQL(where_sql) + psql.SQL(" LIMIT %s OFFSET %s")
+                cur.execute(data_sql, tuple(params + [page_size, offset]))
+            else:
+                data_sql = psql.SQL("SELECT * ") + base + psql.SQL(" LIMIT %s OFFSET %s")
+                cur.execute(data_sql, (page_size, offset))
+            rows = cur.fetchall()
+            cols = [d[0] for d in (cur.description or [])]
+
+            if where_sql:
+                count_sql = psql.SQL("SELECT COUNT(*) ") + base + psql.SQL(" WHERE ") + psql.SQL(where_sql)
+                cur.execute(count_sql, tuple(params))
+            else:
+                count_sql = psql.SQL("SELECT COUNT(*) ") + base
+                cur.execute(count_sql)
+            total = int(cur.fetchone()[0])
+            cur.close()
+            conn.close()
+
+            out_rows = [dict(zip(cols, r)) for r in rows]
+            has_more = (offset + len(out_rows)) < total
+            return Response(
+                {"rows": out_rows, "columns": cols, "has_more": has_more, "filtered_count": total},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error("Failed repository filter execution: %s", e, exc_info=True)
+            return Response({"error": f"Failed to execute repository filter: {e!s}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, source_id):
         """

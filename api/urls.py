@@ -50,6 +50,10 @@ from .views import (
     SourceEditView,
     SourceFieldsView,
     SourceLiveSchemaView,
+    RepositorySchemaTablesView,
+    RepositoryColumnsView,
+    RepositoryTableDataView,
+    RepositoryFilterExecutionView,
     SourcesListView,
     SourceTableDataView,
     SourceTableSelectionView,
@@ -132,6 +136,10 @@ urlpatterns = [
 
     # Source columns API endpoint
     path('api-customer/sources/<int:source_id>/columns/', SourceColumnsView.as_view(), name='source-columns-api'),
+    path('api-customer/repository/tables/', RepositorySchemaTablesView.as_view(), name='repository-schema-tables-api'),
+    path('api-customer/repository/columns/', RepositoryColumnsView.as_view(), name='repository-columns-api'),
+    path('api-customer/repository/table-data/', RepositoryTableDataView.as_view(), name='repository-table-data-api'),
+    path('api-customer/repository/filter/', RepositoryFilterExecutionView.as_view(), name='repository-filter-api'),
 
     # Live schema for a single table (used for schema drift detection, no DB persistence)
     path('api-customer/sources/<int:source_id>/table/<str:table_name>/schema', SourceLiveSchemaView.as_view(), name='source-live-schema-api'),

@@ -19,6 +19,15 @@ from .staging_naming import get_staging_table_name
 
 logger = logging.getLogger(__name__)
 
+def _get_source_configs(config: dict[str, Any]) -> dict[str, Any]:
+    source_configs = config.get("source_configs")
+    if isinstance(source_configs, dict):
+        return source_configs
+    source_configs = config.get("sourceConfigs")
+    if isinstance(source_configs, dict):
+        return source_configs
+    return {}
+
 class SQLCompilationError(Exception):
     """Raised when SQL compilation fails."""
     pass
@@ -345,11 +354,11 @@ def compile_join_sql(
             f"JOIN right branch '{right_id}' is not materialized"
         )
 
-    _ = materialization_points[left_id].staging_table
-    _ = materialization_points[right_id].staging_table
+    left_table = materialization_points[left_id].staging_table
+    right_table = materialization_points[right_id].staging_table
 
     # Build JOIN SQL
-    _ = join_config.get("joinType", "INNER").upper()
+    join_type = join_config.get("joinType", "INNER").upper()
     conditions = join_config.get("conditions", [])
 
     if not conditions:
@@ -379,10 +388,10 @@ def compile_join_sql(
         left_staging = _name_to_staging_col(left_id, left_col)
         right_staging = _name_to_staging_col(right_id, right_col)
         on_parts.append(f'l."{left_staging}" {operator} r."{right_staging}"')
-    _ = " AND ".join(on_parts)
+    on_clause = " AND ".join(on_parts)
 
     # Create staging table for JOIN result
-    _ = get_staging_table_name(job_id, join_node_id)
+    staging_table = get_staging_table_name(job_id, join_node_id)
 
     # Build select clause with collision handling
     reverse_adj = _build_reverse_adjacency(edges)
@@ -428,16 +437,18 @@ def compile_join_sql(
             right_staging_names, table_alias="r", ambiguous_set=ambiguous, ambiguous_suffix="_R_"
         )
         parts = [p for p in (left_select, right_select) if p]
-        ", ".join(parts) if parts else "l.*, r.*"
+        select_clause = ", ".join(parts) if parts else "l.*, r.*"
     else:
         # Fallback to * if columns unknown
-        pass
+        select_clause = "l.*, r.*"
 
     # Base SQL for the JOIN
-    join_sql = '''SELECT {select_clause}
-FROM {_quote_staging_table(left_table)} l
-{join_type} JOIN {_quote_staging_table(right_table)} r
-ON {on_clause}'''
+    join_sql = (
+        f"SELECT {select_clause}\n"
+        f"FROM {_quote_staging_table(left_table)} l\n"
+        f"{join_type} JOIN {_quote_staging_table(right_table)} r\n"
+        f"ON {on_clause}"
+    )
 
     # Apply pushed-down filters to the JOIN result if any
     pushdown_plan = config.get("filter_pushdown_plan", {})
@@ -469,8 +480,7 @@ ON {on_clause}'''
             join_sql = f"SELECT * FROM ({join_sql}) AS joined_filtered WHERE {where_clause}"
             logger.info(f"[SQL] Injected {len(where_parts)} pushed filters into JOIN node {join_node_id[:8]}")
 
-    sql = '''CREATE TABLE {_quote_staging_table(staging_table)} AS
-{join_sql}'''
+    sql = f"CREATE TABLE {_quote_staging_table(staging_table)} AS\n{join_sql}"
 
     return CompiledSQL(
         sql=sql,
@@ -997,6 +1007,28 @@ def compile_source_staging_sql(
                 all_calculated[name] = c
     # Base columns that are not calculated column names
     base_only = sorted(all_base - set(all_calculated.keys()))
+    source_node = nodes.get(source_id, {}) if isinstance(nodes, dict) else {}
+    source_node_config = source_node.get("data", {}).get("config", {}) if isinstance(source_node, dict) else {}
+    source_config = _get_source_configs(config).get(source_id, {})
+
+    # Fallback when branch walk yields nothing (common during validate-only payloads):
+    # derive base columns from source metadata/config so shared-source staging can still compile.
+    if not base_only:
+        node_meta_cols = (
+            source_node.get("data", {}).get("output_metadata", {}).get("columns", [])
+            if isinstance(source_node, dict) else []
+        )
+        cfg_cols = source_node_config.get("columns") or source_node.get("data", {}).get("columns") or []
+        sc_cols = source_config.get("columns") or []
+        fallback_cols = node_meta_cols or cfg_cols or sc_cols
+        for col in fallback_cols:
+            if isinstance(col, dict):
+                name = col.get("db_name") or col.get("name") or col.get("business_name")
+            else:
+                name = col
+            if isinstance(name, str) and name.strip():
+                all_base.add(name.strip())
+        base_only = sorted(all_base - set(all_calculated.keys()))
     # Map base column names to (db_name, technical_name) so staging table columns match _infer_columns
     metadata = config.get("node_output_metadata", {}).get(source_id, {}).get("columns", [])
     name_to_db_tech = {}
@@ -1057,14 +1089,17 @@ def compile_source_staging_sql(
         if resolved_expr:
             select_parts.append(f'({resolved_expr}) AS "{tech_name}"')
     if not select_parts:
-        select_parts = ["*"]
+        raise SQLCompilationError(
+            f"Source node '{source_id}' has no resolvable columns for shared source staging; "
+            "cannot compile source SQL safely."
+        )
     select_clause = ", ".join(select_parts)
 
     source_node = nodes.get(source_id, {})
     if not source_node:
         raise SQLCompilationError(f"Source node '{source_id}' not found")
     node_config = source_node.get("data", {}).get("config", {})
-    source_config = config.get("source_configs", {}).get(source_id, {})
+    source_config = _get_source_configs(config).get(source_id, {})
     table_name = node_config.get("tableName") or source_config.get("table_name")
     schema_name = node_config.get("schema") or source_config.get("schema_name")
     if not table_name:
@@ -1135,7 +1170,7 @@ def _compile_source_node(node: dict[str, Any], nodes: dict[str, Any], edges: lis
     node_config = node.get("data", {}).get("config", {})
 
     # Get source configuration
-    source_configs = config.get("source_configs", {})
+    source_configs = _get_source_configs(config)
     source_config = source_configs.get(node_id, {})
 
     table_name = node_config.get("tableName") or source_config.get("table_name")
@@ -1181,7 +1216,10 @@ def _compile_source_node(node: dict[str, Any], nodes: dict[str, Any], edges: lis
                 "ensure validate/execute populate node_output_metadata for all sources to avoid SELECT *",
                 node_id[:8],
             )
-            sql = f"SELECT * FROM {qualified_table}"
+            raise SQLCompilationError(
+                f"Source node '{node_id}' has no column metadata; cannot compile source SQL. "
+                "Ensure validate runs with source_configs populated."
+            )
         else:
             select_list = ", ".join(select_parts)
             sql = f"SELECT {select_list} FROM {qualified_table}"
@@ -1589,6 +1627,18 @@ def flatten_segment_from_source(
 
     def _resolve_db_for_source(tech_or_col: str) -> str:
         """Resolve column to db_name for source table. Use tech_to_db or derive from prefix."""
+        # Handle legacy technical naming coming from cached metadata / older UI:
+        # "<full-uuid>__<col>" should resolve to "<col>" on the source table.
+        #
+        # Example observed in logs:
+        #   1b3f3cee-c79f-4244-ab60-c956087da05f__is_trial  -> is_trial
+        legacy_m = re.match(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}__(.+)$",
+            tech_or_col,
+        )
+        if legacy_m:
+            return legacy_m.group(1)
+
         db = tech_to_db.get(tech_or_col, tech_or_col)
         if db == tech_or_col and re.match(r"^[a-f0-9]{8}_(.+)$", tech_or_col, re.I):
             return re.match(r"^[a-f0-9]{8}_(.+)$", tech_or_col, re.I).group(1)
@@ -1807,8 +1857,10 @@ def flatten_segment_from_source(
             else:
                 select_parts = [f'"{db}" AS "{prefix}_{db}"' for db in sorted(db_to_tech.keys())]
         else:
-            # Fallback only when metadata missing; prefer to avoid SELECT * from source
-            return f"SELECT * FROM {qualified_table}"
+            raise SQLCompilationError(
+                f"Source node '{source_id}' has no column metadata; cannot compile source SQL. "
+                "Ensure validate runs with source_configs populated."
+            )
     select_clause = ", ".join(select_parts)
     sql = f"SELECT {select_clause} FROM {qualified_table}"
     if where_parts:
@@ -1830,13 +1882,36 @@ def _build_filter_col_to_upstream(upstream_columns: list[str]) -> dict[str, str]
                 out[base] = c
         out[c] = c
 
+        # Map prefixed technical names to their base name so filters using plain
+        # business/display names (e.g. "status") can resolve to technical columns
+        # (e.g. "2f9b6281_status").
+        m_prefix = re.match(r"^[a-f0-9]{8}_(.+)$", c, re.IGNORECASE)
+        if m_prefix:
+            base = m_prefix.group(1)
+            if base and base not in out:
+                out[base] = c
+            if base and base.lower() not in out:
+                out[base.lower()] = c
+
+        # Legacy technical name format: "<full-uuid>__<col>" -> "<col>".
+        m_legacy = re.match(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}__(.+)$",
+            c,
+        )
+        if m_legacy:
+            base = m_legacy.group(1)
+            if base and base not in out:
+                out[base] = c
+            if base and base.lower() not in out:
+                out[base.lower()] = c
+
     # Fallback: map _L_X / _R_X to actual join output columns (e.g. 39ef59b7_cmp_id)
     # when upstream has source-prefixed names but filter uses _L_/_R_
     for c in upstream_columns:
         if "_" in c and len(c) > 10:
             # Pattern: 8hex_colname (e.g. 39ef59b7_cmp_id)
             parts = c.split("_", 1)
-            if len(parts) == 2 and len(parts[0]) == 8 and all(h in "0123456789abcde" for h in parts[0].lower()):
+            if len(parts) == 2 and len(parts[0]) == 8 and all(h in "0123456789abcdef" for h in parts[0].lower()):
                 base = parts[1]
                 if base:
                     # Find position of this column among all that end with _base
@@ -1896,35 +1971,125 @@ def flatten_segment(
     _build_reverse_adjacency(edges)
 
     # Step 1: Build calc col dependency map walking the segment
+    def _topo_sort_calc_defs(defs: list[dict[str, str]]) -> list[dict[str, str]]:
+        """
+        Topologically sort calculated column definitions within a single node.
+
+        Ensures dependencies like:
+          c = a + b
+          d = c + a
+        work regardless of the order user provided in `calculated_columns`.
+        """
+        if len(defs) <= 1:
+            return defs
+
+        # Stable ordering by first appearance in the config.
+        original_order = {i: i for i in range(len(defs))}
+        name_to_index: dict[str, int] = {}
+        for i, d in enumerate(defs):
+            name = d["name"]
+            # Keep first occurrence for duplicate names.
+            if name not in name_to_index:
+                name_to_index[name] = i
+
+        # Deduplicate by name (first wins) to keep the graph well-defined.
+        deduped: list[dict[str, str]] = []
+        seen_names: set[str] = set()
+        for d in defs:
+            if d["name"] in seen_names:
+                continue
+            deduped.append(d)
+            seen_names.add(d["name"])
+
+        defs = deduped
+        if len(defs) <= 1:
+            return defs
+
+        names = [d["name"] for d in defs]
+        names_set = set(names)
+        name_by_lower = {n.lower(): n for n in names}
+
+        # Build dependencies only among the calculated columns in this node.
+        deps_map: dict[str, set[str]] = {n: set() for n in names}
+        for d in defs:
+            n = d["name"]
+            refs = extract_source_refs(d["expr"])
+            for r in refs:
+                rn = name_by_lower.get(r.lower())
+                if rn and rn in names_set and rn != n:
+                    deps_map[n].add(rn)
+
+        # Kahn's algorithm (stable).
+        indegree: dict[str, int] = {n: len(deps_map[n]) for n in names}
+        adj: dict[str, set[str]] = {n: set() for n in names}
+        for n in names:
+            for dep in deps_map[n]:
+                adj[dep].add(n)
+
+        queue: list[str] = [n for n in names if indegree[n] == 0]
+        sorted_names: list[str] = []
+
+        while queue:
+            queue.sort(key=lambda x: name_to_index.get(x, 10**9))
+            cur = queue.pop(0)
+            sorted_names.append(cur)
+            for nxt in adj[cur]:
+                indegree[nxt] -= 1
+                if indegree[nxt] == 0:
+                    queue.append(nxt)
+
+        if len(sorted_names) != len(names):
+            # Cycle or missing resolution — fall back to config order.
+            logger.warning(
+                "[SQL] Projection calc dependency cycle/unresolvable ordering detected; "
+                "falling back to original order. defs=%s",
+                [(d["name"], d["expr"]) for d in defs],
+            )
+            return defs
+
+        by_name = {d["name"]: d for d in defs}
+        return [by_name[n] for n in sorted_names]
+
     for node_id in segment_node_ids:
         node = nodes.get(node_id, {})
         node_type = _get_node_type(node)
         node_config = node.get("data", {}).get("config", {})
         if node_type == "projection":
+            calc_defs: list[dict[str, str]] = []
             for calc in node_config.get("calculated_columns", []) or node_config.get("calculatedColumns", []):
                 if not isinstance(calc, dict):
                     continue
                 name = calc.get("name") or calc.get("alias")
                 expr = calc.get("expression")
                 if name and expr:
-                    out_name = name_to_technical.get(name, name)
-                    resolved = resolve_formula(expr, calc_col_map)
-                    calc_col_map[out_name] = _rewrite_expression_column_refs(resolved, name_to_technical)
+                    calc_defs.append({"name": str(name), "expr": str(expr)})
+
             for comp in node_config.get("computedColumns", []):
                 if isinstance(comp, dict):
                     alias = comp.get("alias") or comp.get("name")
                     expr = comp.get("expression")
                     if alias and expr:
-                        out_name = name_to_technical.get(alias, alias)
-                        calc_col_map[out_name] = _rewrite_expression_column_refs(resolve_formula(expr, calc_col_map), name_to_technical)
+                        calc_defs.append({"name": str(alias), "expr": str(expr)})
+
+            for d in _topo_sort_calc_defs(calc_defs):
+                out_name = name_to_technical.get(d["name"], d["name"])
+                resolved = resolve_formula(d["expr"], calc_col_map)
+                calc_col_map[out_name] = _rewrite_expression_column_refs(resolved, name_to_technical)
         if node_type == "compute":
+            calc_defs = []
             for comp in node_config.get("computedColumns", []):
                 if isinstance(comp, dict):
                     alias = comp.get("alias") or comp.get("name")
                     expr = comp.get("expression")
                     if alias and expr:
-                        out_name = name_to_technical.get(alias, alias)
-                        calc_col_map[out_name] = _rewrite_expression_column_refs(resolve_formula(expr, calc_col_map), name_to_technical)
+                        calc_defs.append({"name": str(alias), "expr": str(expr)})
+
+            for d in _topo_sort_calc_defs(calc_defs):
+                out_name = name_to_technical.get(d["name"], d["name"])
+                calc_col_map[out_name] = _rewrite_expression_column_refs(
+                    resolve_formula(d["expr"], calc_col_map),
+                    name_to_technical,
+                )
 
     # Step 2: From final node determine required fields and select expressions
     final_id = segment_node_ids[-1]

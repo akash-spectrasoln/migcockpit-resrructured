@@ -84,6 +84,24 @@ scripts\run_tests.bat                 # Windows
 ./scripts/run_tests.sh               # Linux/Mac
 ```
 
+### CI test tiers
+```bash
+# Tier A (PR required, fast)
+./scripts/run_tests.sh pr
+scripts\run_tests.bat pr
+
+# Tier B (merge/nightly, full)
+./scripts/run_tests.sh nightly
+scripts\run_tests.bat nightly
+```
+
+### Full Tests (backend + frontend + E2E)
+```bash
+./scripts/run_full_tests.sh
+scripts\run_full_tests.bat
+.\scripts\run_full_tests.ps1
+```
+
 ### Python lint only
 ```bash
 ruff check .                          # check

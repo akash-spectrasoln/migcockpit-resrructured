@@ -64,6 +64,11 @@ class MigrationRequest(BaseModel):
         default_factory=dict,
         description="Migration configuration (chunk_size, etc.)"
     )
+    # Optional top-level DB connection payloads (some clients send these outside `config`).
+    connection_config: Optional[dict[str, Any]] = Field(None, description="Top-level execution DB connection config")
+    destination_configs: Optional[dict[str, Any]] = Field(None, description="Top-level destination configs map")
+    connectionConfig: Optional[dict[str, Any]] = Field(None, description="CamelCase alias for connection_config")
+    destinationConfigs: Optional[dict[str, Any]] = Field(None, description="CamelCase alias for destination_configs")
     job_id: Optional[str] = Field(None, description="Optional job ID from Django; if provided, used for pipeline and WebSocket broadcasts so frontend receives updates")
     execution_plan: Optional[dict[str, Any]] = Field(None, description="Pre-built execution plan (from Validate or loaded from DB); when set, compilation is skipped")
 

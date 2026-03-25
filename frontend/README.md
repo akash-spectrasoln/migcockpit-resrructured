@@ -1,225 +1,144 @@
-# Frontend - Data Migration Cockpit
+# Frontend Architecture - Data Migration Cockpit
 
-React-based frontend application for the Data Migration Cockpit, built with modern web technologies.
+This frontend is a React + TypeScript application for building, validating, and executing migration pipelines on a visual canvas.
 
-## Technology Stack
+## Stack
 
-- **React 18** - UI library
-- **TypeScript** - Type safety
-- **Chakra UI** - Component library and theming
-- **React Flow** - Canvas/diagram functionality
-- **React Query** - Data fetching and caching
-- **Zustand** - State management
-- **Vite** - Build tool and dev server
-- **Framer Motion** - Animations
-- **Axios** - HTTP client
-- **Socket.IO Client** - WebSocket communication
+- React 18 + TypeScript
+- Vite
+- Chakra UI
+- React Flow (graph canvas)
+- Zustand (canvas/auth client state)
+- TanStack React Query (server state)
+- Axios (HTTP API layer)
 
-## Project Structure
+## High-Level Architecture
 
+The app is organized around four layers:
+
+1. **Presentation Layer**
+   - Pages (`src/pages`)
+   - Canvas components (`src/components/canvas`)
+   - Config panels (`src/components/canvas/panels`)
+   - Sidebar/table browser (`src/components/canvas/sidebar`)
+
+2. **State Layer**
+   - Global UI/canvas state in `src/store/canvasStore.ts`
+   - Auth/session state in `src/store/authStore.ts`
+   - Query cache + async orchestration via React Query hooks
+
+3. **Pipeline Engine Layer**
+   - Graph/schema normalization and inference in `src/pipeline-engine`
+   - Validation helpers in `src/pipeline-engine/validator.ts`
+   - Column mapping/schema logic in `src/pipeline-engine/schema.ts`
+
+4. **Integration Layer**
+   - API route constants: `src/constants/server-routes.ts`
+   - Axios clients: `src/lib/axios/api-client.ts`
+   - Domain hooks: `src/hooks/useMigration.ts`, `src/hooks/useConnections.ts`, `src/hooks/useSchemaDrift.ts`
+
+## Core Runtime Flow
+
+1. User designs a graph in `DataFlowCanvas`.
+2. Node/edge/config changes are persisted in `canvasStore`.
+3. Pipeline engine derives graph metadata/column context for panels and validation.
+4. Frontend calls validate endpoint (`/validate`) using the API layer.
+5. Backend returns validation result + plan metadata.
+6. On execute, frontend triggers migration (`/execute`) and tracks progress via polling/websocket updates.
+7. UI updates node/job statuses and table previews in near real-time.
+
+## Canvas Subsystem
+
+Main entry points:
+
+- `src/pages/CanvasPage.tsx`
+- `src/components/canvas/DataFlowCanvas.tsx`
+- `src/components/canvas/panels/NodeConfigPanel.tsx`
+
+Supporting modules:
+
+- `nodes/`: source/filter/join/projection/compute node renderers
+- `interactions/`: edge menus, context actions, insert/destination controls
+- `panels/`: per-node configuration UIs (filter, join, projection, destination, etc.)
+- `sidebar/`: source connections and table browser (Remote/Repository sections)
+
+## Data and API Boundaries
+
+- **Do not call APIs directly from deep UI components** when possible; prefer domain hooks or typed client methods.
+- API client contracts live in:
+  - `src/constants/server-routes.ts`
+  - `src/lib/axios/api-client.ts`
+- Canvas/business logic should stay outside pure presentational components.
+
+## State Management Rules
+
+- Use **Zustand** for shared interactive canvas state (selected node, graph updates, panel state, dirty flags).
+- Use **React Query** for server data lifecycle (fetching/caching/retries/invalidation).
+- Keep local component state only for transient UI details (drawer toggles, form field temp values).
+
+## Key Directories
+
+```text
+src/
+  components/
+    canvas/
+      DataFlowCanvas.tsx
+      nodes/
+      panels/
+      interactions/
+      sidebar/
+  pipeline-engine/
+    graph.ts
+    schema.ts
+    validator.ts
+    compiler.ts
+    propagate.ts
+  hooks/
+    useMigration.ts
+    useConnections.ts
+    useSchemaDrift.ts
+  lib/axios/
+    api-client.ts
+  constants/
+    server-routes.ts
+  store/
+    canvasStore.ts
+    authStore.ts
+  pages/
+    CanvasPage.tsx
+    DashboardPage.tsx
+    JobsPage.tsx
 ```
-frontend/
-├── src/
-│   ├── components/          # React components
-│   │   └── Canvas/          # Canvas-related components
-│   │       ├── DataFlowCanvasChakra.tsx      # Main canvas (Chakra UI)
-│   │       ├── NodePaletteChakra.tsx         # Node palette sidebar
-│   │       ├── NodeConfigPanelChakra.tsx     # Configuration drawer
-│   │       ├── NodeTypesChakra.tsx            # Custom node types
-│   │       └── EdgeTypes.tsx                 # Custom edge types
-│   │
-│   ├── pages/               # Page components
-│   │   ├── LoginPageChakra.tsx    # Login page
-│   │   ├── CanvasPageChakra.tsx   # Canvas page
-│   │   ├── JobsPage.tsx            # Jobs monitoring page
-│   │   ├── LoginPage.tsx           # Re-exports Chakra version
-│   │   └── CanvasPage.tsx          # Re-exports Chakra version
-│   │
-│   ├── hooks/               # React Query hooks
-│   │   ├── useCanvas.ts     # Canvas operations
-│   │   ├── useMigration.ts  # Migration operations
-│   │   └── useConnections.ts # Connection operations
-│   │
-│   ├── services/            # API and WebSocket services
-│   │   ├── api.ts           # Axios API client
-│   │   └── websocket.ts     # WebSocket client
-│   │
-│   ├── store/               # Zustand stores
-│   │   ├── authStore.ts     # Authentication state
-│   │   └── canvasStore.ts   # Canvas state
-│   │
-│   ├── providers/           # React context providers
-│   │   └── AppProviders.tsx # Chakra UI + React Query providers
-│   │
-│   ├── theme/               # Theme configuration
-│   │   └── theme.ts         # Chakra UI theme
-│   │
-│   ├── types/               # TypeScript types
-│   │   └── nodeRegistry.ts  # Node type definitions
-│   │
-│   ├── App.tsx              # Main app component
-│   ├── main.tsx             # Entry point
-│   └── index.css            # Global styles
-│
-├── index.html               # HTML template
-├── package.json             # Dependencies
-├── vite.config.ts          # Vite configuration
-├── tsconfig.json           # TypeScript configuration
-└── tailwind.config.js      # Tailwind CSS configuration (legacy)
-```
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js 16+ and npm
-
-### Installation
+## Running the Frontend
 
 ```bash
 npm install
-```
-
-### Development
-
-Start the development server:
-
-```bash
 npm run dev
 ```
 
-The app will be available at http://localhost:3000
+Other useful scripts:
 
-### Build
+- `npm run build`
+- `npm run preview`
+- `npm run type-check`
+- `npm run lint`
+- `npm run check-all`
 
-Build for production:
+## Environment
 
-```bash
-npm run build
-```
-
-The built files will be in the `dist/` directory.
-
-### Preview Production Build
-
-```bash
-npm run preview
-```
-
-## Key Features
-
-### Canvas Interface
-- Drag-and-drop node creation
-- Visual pipeline building
-- Real-time validation
-- Node configuration panels
-- Multiple view modes (Design, Validate, Monitor)
-
-### State Management
-- **Zustand** for global state (auth, canvas)
-- **React Query** for server state (API data)
-- Local component state for UI interactions
-
-### Styling
-- **Chakra UI** for all components
-- Custom theme with brand colors
-- Responsive design
-- Dark mode support (prepared)
-
-### Data Fetching
-- React Query hooks for automatic caching
-- Optimistic updates
-- Background refetching
-- Error handling
-
-## Component Architecture
-
-### Pages
-- **LoginPage** - Authentication
-- **CanvasPage** - Main canvas interface
-- **JobsPage** - Migration job monitoring
-
-### Canvas Components
-- **DataFlowCanvasChakra** - Main canvas orchestrator
-- **NodePaletteChakra** - Left sidebar with draggable nodes
-- **NodeConfigPanelChakra** - Right drawer for node configuration
-- **NodeTypesChakra** - Custom React Flow node components
-
-### Hooks
-- **useCanvas** - Canvas CRUD operations
-- **useMigration** - Migration job management
-- **useConnections** - Connection and metadata fetching
-
-## API Integration
-
-The frontend communicates with:
-- **Django REST API** (port 8000) - Main API
-- **FastAPI Services** (ports 8001-8004) - Microservices
-- **WebSocket Server** (port 8004) - Real-time updates
-
-## Environment Variables
-
-Create a `.env` file in the frontend directory:
+Use a `.env` file in `frontend/`:
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000
 VITE_WS_BASE_URL=ws://localhost:8004
 ```
 
-## Development Notes
+## Notes for Contributors
 
-### Adding New Components
-1. Create component in appropriate directory
-2. Use Chakra UI components
-3. Follow TypeScript best practices
-4. Add to appropriate exports
-
-### Adding New Hooks
-1. Create hook in `hooks/` directory
-2. Use React Query for API calls
-3. Export from hook file
-
-### Styling Guidelines
-- Use Chakra UI components and props
-- Use theme tokens for colors
-- Follow responsive design patterns
-- Use framer-motion for animations
-
-## Troubleshooting
-
-### Port Already in Use
-Change the port in `vite.config.ts`:
-```typescript
-server: {
-  port: 3001, // Change to available port
-}
-```
-
-### API Connection Issues
-- Verify Django server is running on port 8000
-- Check CORS settings in Django
-- Verify API_BASE_URL in environment
-
-### Build Errors
-- Clear `node_modules` and reinstall: `rm -rf node_modules && npm install`
-- Clear Vite cache: `rm -rf node_modules/.vite`
-
-## Scripts
-
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run lint` - Run ESLint
-
-## Dependencies
-
-See `package.json` for complete list of dependencies.
-
-### Key Dependencies
-- `@chakra-ui/react` - UI component library
-- `reactflow` - Canvas/diagram library
-- `@tanstack/react-query` - Data fetching
-- `zustand` - State management
-- `axios` - HTTP client
-- Native `WebSocket` - real-time progress communication
+- Keep naming aligned with backend terms: `business_name`, `technical_name`, `db_name`.
+- Prefer adding behavior in reusable hooks/services before adding one-off component calls.
+- For canvas features, update both:
+  - rendering behavior (`components/canvas/*`)
+  - data/model behavior (`pipeline-engine/*`, `store/canvasStore.ts`)
 

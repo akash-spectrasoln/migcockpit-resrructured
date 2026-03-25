@@ -120,6 +120,13 @@ class ExpressionTranslator:
             func_name = func_match.group(1).upper()
             args_str = func_match.group(2)
 
+            # CAST uses SQL syntax: CAST(<expr> AS <type>)
+            # It is not a normal comma-separated function argument list.
+            if func_name == 'CAST':
+                cast_expr, cast_type = self._parse_cast_parts(args_str)
+                translated_expr = self._translate_expression(cast_expr)
+                return f'CAST({translated_expr} AS {cast_type})'
+
             # Translate function name
             sql_func = self.FUNCTION_MAP.get(func_name, func_name)
 
@@ -225,6 +232,33 @@ class ExpressionTranslator:
                 return f'"{resolved}"'
 
         raise ValueError(f"Could not translate expression: {expr}")
+
+    def _parse_cast_parts(self, cast_args: str) -> tuple[str, str]:
+        """
+        Parse CAST arguments in the form: <expression> AS <type>.
+        Supports nested parentheses in expression/type.
+        """
+        depth = 0
+        i = 0
+        upper = cast_args.upper()
+        while i < len(cast_args):
+            ch = cast_args[i]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+            elif depth == 0 and upper[i:i + 4] == ' AS ':
+                left = cast_args[:i].strip()
+                right = cast_args[i + 4:].strip()
+                if not left or not right:
+                    break
+                # Keep target type as SQL text, but normalize common aliases.
+                type_upper = right.upper()
+                if type_upper == 'STRING':
+                    right = 'TEXT'
+                return left, right
+            i += 1
+        raise ValueError("CAST must use syntax CAST(expression AS type)")
 
     def _parse_arguments(self, args_str: str) -> list[str]:
         """Parse function arguments, handling nested parentheses."""

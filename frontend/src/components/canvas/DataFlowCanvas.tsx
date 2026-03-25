@@ -71,7 +71,7 @@ import { NodeContextMenu } from './interactions/NodeContextMenu'
 import { EdgeContextMenu } from './interactions/EdgeContextMenu'
 import { NodeTypeSelectionModal } from './interactions/NodeTypeSelectionModal'
 import { getNodeTypeDefinition } from '../../types/nodeRegistry'
-import { canvasApi, migrationApi, pipelineApi, connectionApi, metadataApi } from '../../services/api'
+import { canvasApi, migrationApi, pipelineApi, connectionApi, metadataApi, sourceTableApi } from '../../services/api'
 import { wsService } from '../../services/websocket'
 import { useSchemaDrift, clearTableSchemaCache } from '../../hooks/useSchemaDrift'
 import {
@@ -216,8 +216,11 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
     sourceId?: number
     tableName?: string
     schema?: string
+    isRepository?: boolean
     nodeId?: string
     directFilterConditions?: any[]
+    directFilterExpression?: string
+    directFilterMode?: 'builder' | 'expression'
   } | null>(null)
 
   // Execution monitor state (current run status from API + WebSocket)
@@ -255,6 +258,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
     sourceId: number
     tableName: string
     schema?: string
+    isRepository?: boolean
   } | null>(null)
 
   // Table filter state management (session-based, per table)
@@ -439,7 +443,12 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
 
         if (!driftResults.some((r) => r.hasDrift)) {
           // No drift — just persist the snapshot fix and stop
-          useCanvasStore.getState().setNodes(updatedNodes)
+          // IMPORTANT: drift detection is async; user may have added nodes while it ran.
+          // Merge patches into the latest store nodes instead of overwriting the graph.
+          const latestNodes = useCanvasStore.getState().nodes
+          const patchedById = new Map(updatedNodes.map((n) => [n.id, n] as const))
+          const merged = latestNodes.map((n) => patchedById.get(n.id) ?? n)
+          useCanvasStore.getState().setNodes(merged)
           return
         }
 
@@ -544,7 +553,12 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           }
         }
 
-        useCanvasStore.getState().setNodes(updatedNodes)
+        // IMPORTANT: drift detection is async; user may have added nodes while it ran.
+        // Merge patches into the latest store nodes instead of overwriting the graph.
+        const latestNodes = useCanvasStore.getState().nodes
+        const patchedById = new Map(updatedNodes.map((n) => [n.id, n] as const))
+        const merged = latestNodes.map((n) => patchedById.get(n.id) ?? n)
+        useCanvasStore.getState().setNodes(merged)
 
         // ── Step 3: show toast summary ─────────────────────────────────────
         if (toastLines.length > 0) {
@@ -1150,7 +1164,13 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
       let inputMeta = inputNode?.data?.output_metadata?.columns
       // When input is projection, prefer config.output_columns/includedColumns if they have more columns
       if (inputNode?.data?.type === 'projection') {
-        const configCols = inputNode.data.config?.output_columns || inputNode.data.config?.includedColumns || []
+        const cfg = inputNode.data.config || {}
+        const configCols =
+          cfg.output_columns ||
+          cfg.includedColumns ||
+          cfg.selectedColumns ||
+          cfg.columns ||
+          []
         if (Array.isArray(configCols) && configCols.length > (inputMeta?.length ?? 0)) {
           inputMeta = configCols.map((c: string) => (typeof c === 'string' ? { name: c, technical_name: c } : c))
         }
@@ -1767,8 +1787,10 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
       return
     }
 
-    const sourceNode = storeNodes.find((n) => n.id === sourceNodeId)
-    const targetNode = storeNodes.find((n) => n.id === targetNodeId)
+    // Use latest store nodes (async-safe) so insertion can't be undone by stale closures.
+    const latestNodes = useCanvasStore.getState().nodes || []
+    const sourceNode = latestNodes.find((n) => n.id === sourceNodeId)
+    const targetNode = latestNodes.find((n) => n.id === targetNodeId)
     let position = { x: 0, y: 0 }
     if (sourceNode && targetNode) {
       position = {
@@ -1838,7 +1860,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
       duration: 3000,
       isClosable: true,
     })
-  }, [edgeContextMenu, storeNodes, toast, addNode, setEdges, updateNodeStatus, setIsDirty])
+  }, [edgeContextMenu, toast, addNode, setEdges, updateNodeStatus, setIsDirty])
 
   // Handle node type selection and insertion (from modal); frontend-only, persist via Save Pipeline
   const handleNodeTypeSelected = useCallback((nodeType: string) => {
@@ -1847,7 +1869,8 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
     const { sourceNodeId, targetNodeId } = edgeInsertModal
     setEdgeInsertModal(null)
 
-    const currentNodes = storeNodes || []
+    // Use latest store nodes (async-safe) so insertion can't be undone by stale closures.
+    const currentNodes = useCanvasStore.getState().nodes || []
     const nodeTypeDef = getNodeTypeDefinition(nodeType)
     if (!nodeTypeDef) {
       toast({
@@ -1931,7 +1954,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
       duration: 3000,
       isClosable: true,
     })
-  }, [edgeInsertModal, storeNodes, toast, addNode, setEdges, updateNodeStatus, setIsDirty])
+  }, [edgeInsertModal, toast, addNode, setEdges, updateNodeStatus, setIsDirty])
 
   // Initialize canvas state
   useEffect(() => {
@@ -2786,6 +2809,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                 sourceId: parsedData.sourceId,
                 tableName: table.table_name,
                 schema: table.schema,
+                isRepository: parsedData.sourceId === -1 || !!parsedData.isRepository,
                 // Embed filter conditions directly in Source node if available
                 ...(activeFilter ? {
                   conditions: activeFilter.conditions || [],
@@ -2808,7 +2832,20 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
 
           // Fetch live schema in background and enrich node's output_metadata
           // This is the snapshot used for drift detection on subsequent opens
-          fetchLiveSchema(parsedData.sourceId, table.table_name, table.schema || undefined).then((liveColumns) => {
+          const loadSchema = async () => {
+            if (parsedData.sourceId === -1 || parsedData.isRepository) {
+              const repoCols: any = await sourceTableApi.repositoryColumns({
+                table_name: table.table_name,
+                schema: table.schema || 'repository',
+              })
+              return (repoCols?.columns || []).map((c: any) => ({
+                name: c.name || c.column_name,
+                type: c.datatype || c.type || 'TEXT',
+              }))
+            }
+            return fetchLiveSchema(parsedData.sourceId, table.table_name, table.schema || undefined)
+          }
+          loadSchema().then((liveColumns: any[]) => {
             const currentNodes = useCanvasStore.getState().nodes
             const enriched = currentNodes.map((n: Node) =>
               n.id === nodeId
@@ -2851,6 +2888,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                 sourceId: parsedData.sourceId,
                 tableName: table.table_name,
                 schema: table.schema,
+                isRepository: parsedData.sourceId === -1 || !!parsedData.isRepository,
                 directFilterConditions: activeFilter.conditions || [],
               })
             } else {
@@ -2859,6 +2897,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                 sourceId: parsedData.sourceId,
                 tableName: table.table_name,
                 schema: table.schema,
+                isRepository: parsedData.sourceId === -1 || !!parsedData.isRepository,
               })
             }
           }, 100)
@@ -2893,6 +2932,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
         sourceId: sourceId,
         tableName: table.table_name,
         schema: table.schema || '',
+        isRepository: sourceId === -1,
       })
 
       // Clear any selected node to show direct filter panel
@@ -2914,7 +2954,10 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
           directFilterConditions: existingFilter.conditions,
+          directFilterExpression: existingFilter.expression || '',
+          directFilterMode: existingFilter.mode || 'builder',
         })
       } else {
         // Show unfiltered data
@@ -2922,6 +2965,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
         })
       }
     },
@@ -2939,6 +2983,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
         })
         setSelectedNode(null)
 
@@ -2953,7 +2998,10 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
           directFilterConditions: existingFilter.conditions,
+          directFilterExpression: existingFilter.expression || '',
+          directFilterMode: existingFilter.mode || 'builder',
         })
       } else {
         // No filter - show unfiltered data and table details
@@ -2962,6 +3010,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
         })
       }
     },
@@ -2979,6 +3028,7 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
         })
 
         // Clear selected node to show filter panel
@@ -2989,7 +3039,10 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
           sourceId: sourceId,
           tableName: table.table_name,
           schema: table.schema || '',
+          isRepository: sourceId === -1,
           directFilterConditions: existingFilter.conditions,
+          directFilterExpression: existingFilter.expression || '',
+          directFilterMode: existingFilter.mode || 'builder',
         })
 
         // Expand panels if collapsed
@@ -4302,7 +4355,11 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
             migrationApi.execute(canvasId, { config: { flow_node_ids: Array.from(flow) } })
           )
         )
-        responses.forEach((r) => jobIds.push(r.data.job_id))
+        responses.forEach((r: any) => {
+          const jid = r?.job_id ?? r?.data?.job_id
+          if (!jid) throw new Error('Migration start response missing job_id')
+          jobIds.push(jid)
+        })
       } else {
         const executePayload: Record<string, unknown> = {
           nodes: storeNodes && Array.isArray(storeNodes) ? storeNodes.map((node) => ({
@@ -4315,8 +4372,10 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
         if (flowNodeIds && flowNodeIds.length > 0) {
           executePayload.config = { flow_node_ids: flowNodeIds }
         }
-        const response = await migrationApi.execute(canvasId, executePayload)
-        jobIds.push(response.data.job_id)
+        const response: any = await migrationApi.execute(canvasId, executePayload)
+        const jid = response?.job_id ?? response?.data?.job_id
+        if (!jid) throw new Error('Migration start response missing job_id')
+        jobIds.push(jid)
       }
 
       const jobId = jobIds[0]
@@ -5421,10 +5480,13 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                 sourceId={tableDataPanel.sourceId}
                 tableName={tableDataPanel.tableName}
                 schema={tableDataPanel.schema}
+          isRepository={tableDataPanel.isRepository}
                 nodeId={tableDataPanel.nodeId}
                 nodes={storeNodes}
                 edges={storeEdges}
                 directFilterConditions={tableDataPanel.directFilterConditions}
+                directFilterExpression={tableDataPanel.directFilterExpression}
+                directFilterMode={tableDataPanel.directFilterMode}
                 canvasId={canvasId}
                 onClose={() => {
                   setTableDataPanel(null)
@@ -5530,6 +5592,8 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                       tableName: directFilterMode.tableName,
                       schema: directFilterMode.schema,
                       directFilterConditions: config.conditions || [],
+                      directFilterExpression: config.expression || '',
+                      directFilterMode: config.mode || 'builder',
                     })
                   }
                 }}
@@ -5541,6 +5605,8 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                       tableName: directFilterMode.tableName,
                       schema: directFilterMode.schema,
                       directFilterConditions: conditions,
+                      directFilterExpression: '',
+                      directFilterMode: 'builder',
                     })
                     // Expand bottom panel if collapsed
                     if (bottomPanelCollapsed) {
@@ -5568,13 +5634,17 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                       tableName: directFilterMode.tableName,
                       schema: directFilterMode.schema,
                       directFilterConditions: [],
+                      directFilterExpression: '',
+                      directFilterMode: 'builder',
                     })
                   }
                 }}
               />
             ) : selectedNode && selectedNode.data.type === 'source' && selectedNode.data.config?.sourceId && selectedNode.data.config?.tableName ? (
               // Check if source node has embedded filter conditions
-              selectedNode.data.config?.isFiltered || (selectedNode.data.config?.conditions && selectedNode.data.config.conditions.length > 0) ? (
+              selectedNode.data.config?.isFiltered ||
+              (selectedNode.data.config?.conditions && selectedNode.data.config.conditions.length > 0) ||
+              (selectedNode.data.config?.expression && String(selectedNode.data.config.expression).trim()) ? (
                 // Show filter configuration panel for filtered source nodes
                 <FilterConfigPanel
                   node={selectedNode}
@@ -5660,6 +5730,8 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                           tableName: sourceNode.data.config?.tableName,
                           schema: sourceNode.data.config?.schema,
                           directFilterConditions: config.conditions || [],
+                          directFilterExpression: config.expression || '',
+                          directFilterMode: config.mode || 'builder',
                         })
                       } else {
                         setTableDataPanel({
@@ -5813,6 +5885,8 @@ export const DataFlowCanvas: React.FC<DataFlowCanvasProps> = ({
                         schema: sourceConfig.schema,
                         // Pass conditions to ensure preview shows filtered data
                         directFilterConditions: config.conditions || [],
+                        directFilterExpression: config.expression || '',
+                        directFilterMode: config.mode || 'builder',
                       })
                     } else {
                       setTableDataPanel({

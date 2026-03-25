@@ -92,6 +92,7 @@ addopts      = "-v --tb=short"
 markers = [
     "unit: No database, no network — runs in milliseconds",
     "integration: Requires a real database — auto-skips if unavailable",
+    "db: Requires Django settings + real DB (used by some cache tests)",
     "slow: Takes more than 5 seconds",
 ]
 # Uncomment once pytest-django is installed:

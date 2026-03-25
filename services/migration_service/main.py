@@ -67,4 +67,7 @@ app.include_router(migration_router)
 app.include_router(execution_state_router)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8003, reload=True)
+    # On Windows, --reload can occasionally interrupt worker import during spawn
+    # and print transient KeyboardInterrupt traces. Keep reload configurable.
+    reload_enabled = os.getenv("MIGRATION_SERVICE_RELOAD", "false").strip().lower() in ("1", "true", "yes", "on")
+    uvicorn.run("main:app", host="0.0.0.0", port=8003, reload=reload_enabled)

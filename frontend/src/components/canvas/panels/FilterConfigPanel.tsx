@@ -31,6 +31,7 @@ import {
 import { Plus, X, Code as CodeIcon, Search, CheckCircle, XCircle, Save } from 'lucide-react'
 import { Node, Edge } from 'reactflow'
 import { useCanvasStore } from '../../../store/canvasStore'
+import { validationApi } from '../../../lib/axios/api-client'
 import { 
   TypedFilterCondition, 
   ColumnMetadata, 
@@ -94,8 +95,8 @@ const functions: FunctionDefinition[] = [
   { name: 'MIN', category: 'numeric', description: 'Minimum value', syntax: 'MIN(column)', returnType: 'NUMERIC' },
 
   // Date functions
-  { name: 'CURRENT_DATE', category: 'date', description: 'Current date', syntax: 'CURRENT_DATE()', returnType: 'DATE' },
-  { name: 'CURRENT_TIMESTAMP', category: 'date', description: 'Current timestamp', syntax: 'CURRENT_TIMESTAMP()', returnType: 'TIMESTAMP' },
+  { name: 'CURRENT_DATE', category: 'date', description: 'Current date', syntax: 'CURRENT_DATE', returnType: 'DATE' },
+  { name: 'CURRENT_TIMESTAMP', category: 'date', description: 'Current timestamp', syntax: 'CURRENT_TIMESTAMP', returnType: 'TIMESTAMP' },
   { name: 'DATEADD', category: 'date', description: 'Add to date', syntax: 'DATEADD(unit, value, date)', returnType: 'DATE' },
   { name: 'DATEDIFF', category: 'date', description: 'Date difference', syntax: 'DATEDIFF(unit, date1, date2)', returnType: 'INTEGER' },
   { name: 'YEAR', category: 'date', description: 'Extract year', syntax: 'YEAR(date)', returnType: 'INTEGER' },
@@ -138,6 +139,7 @@ interface FilterConfigPanelProps {
     sourceId: number
     tableName: string
     schema?: string
+    isRepository?: boolean
   } | null
   existingFilter?: {
     conditions: any[]
@@ -170,6 +172,7 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [validationSuccess, setValidationSuccess] = useState<string | null>(null)
   const [previewCount, setPreviewCount] = useState<number | null>(null)
   const [functionSearch, setFunctionSearch] = useState('')
   const [selectedFunctionCategory, setSelectedFunctionCategory] = useState<string>('all')
@@ -288,37 +291,48 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
     setUpstreamNodeId(inputNodeId)
 
     // Read directly from the heavily optimized compiledGraph in zustand store
-    if (compiledGraph && compiledGraph.nodes[node.id]) {
-      const inputSchema = compiledGraph.nodes[node.id].inputSchema || []
-      
-      if (inputSchema.length > 0) {
-        setHasUpstreamMetadata(true)
-        setAvailableColumns(
-          inputSchema.map((col) => {
-            const anyCol: any = col as any
-            const displayName =
-              anyCol.outputName || anyCol.business_name || col.column || col.name
-            const technicalName =
-              anyCol.technical_name || col.column || col.name
+    const compiledInputSchema =
+      (compiledGraph && compiledGraph.nodes[node.id]?.inputSchema) || []
 
-            return {
-              name: displayName,
-              business_name: displayName,
-              technical_name: technicalName,
-              datatype: (col.datatype || 'TEXT').toUpperCase(),
-              nullable: col.nullable ?? true,
-            }
-          })
-        )
-        setError(null)
-        return
-      }
+    // Fallback: compiledGraph can be stale for a moment; prefer inputNode's output_metadata if it's larger.
+    const inputMetaCols = (inputNode as any)?.data?.output_metadata?.columns || []
+    const chosenSchema =
+      Array.isArray(inputMetaCols) && inputMetaCols.length > compiledInputSchema.length
+        ? inputMetaCols
+        : compiledInputSchema
+
+    if (Array.isArray(chosenSchema) && chosenSchema.length > 0) {
+      setHasUpstreamMetadata(true)
+      setAvailableColumns(
+        chosenSchema.map((col: any) => {
+          const anyCol: any = col as any
+          const displayName =
+            anyCol.outputName ||
+            anyCol.business_name ||
+            anyCol.name ||
+            anyCol.column_name ||
+            anyCol.column ||
+            String(anyCol)
+          const technicalName =
+            anyCol.technical_name || anyCol.db_name || anyCol.column || anyCol.name || displayName
+
+          return {
+            name: displayName,
+            business_name: anyCol.business_name || displayName,
+            technical_name: technicalName,
+            datatype: String(anyCol.datatype || anyCol.data_type || anyCol.type || 'TEXT').toUpperCase(),
+            nullable: anyCol.nullable ?? true,
+          }
+        })
+      )
+      setError(null)
+      return
     }
     
     // Fallback: If no compiled graph schema yet, clear them
     setHasUpstreamMetadata(false)
     setAvailableColumns([])
-  }, [inputNodeId, node?.id, compiledGraph, directFilterMode])
+  }, [inputNodeId, node?.id, compiledGraph, directFilterMode, inputNode])
 
   // ✅ FIX: Use useCallback with stable ID generation to prevent re-creating functions
   const conditionIdRef = useRef(0)
@@ -945,16 +959,24 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
 
         // Call filter execution API to get metadata
         const { api } = await import('../../../services/api')
-        const response = await api.post(
-          `/api/api-customer/sources/${sourceConfig.sourceId}/filter/`,
-          {
-            table_name: sourceConfig.tableName,
-            schema: sourceConfig.schema || '',
-            conditions: cleanedConditions,  // Send conditions array directly
-            page: 1,
-            page_size: 1,  // Just get metadata
-          }
-        )
+        const response = sourceConfig.sourceId === -1
+          ? await api.post('/api/api-customer/repository/filter/', {
+              table_name: sourceConfig.tableName,
+              schema: sourceConfig.schema || 'repository',
+              conditions: cleanedConditions,  // Send conditions array directly
+              page: 1,
+              page_size: 1,  // Just get metadata
+            })
+          : await api.post(
+              `/api/api-customer/sources/${sourceConfig.sourceId}/filter/`,
+              {
+                table_name: sourceConfig.tableName,
+                schema: sourceConfig.schema || '',
+                conditions: cleanedConditions,  // Send conditions array directly
+                page: 1,
+                page_size: 1,  // Just get metadata
+              }
+            )
 
         const columns = response.data.columns || []
         const columnCount = columns.length
@@ -1203,16 +1225,24 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
 
       // Call filter execution API to preview filtered data
       const { api } = await import('../../../services/api')
-      const response = await api.post(
-        `/api/api-customer/sources/${sourceConfig.sourceId}/filter/`,
-        {
-          table_name: sourceConfig.tableName,
-          schema: sourceConfig.schema || '',
-          conditions: filterSpec,  // Send conditions array directly
-          page: 1,
-          page_size: 100,  // Get preview rows (limited to 100 for preview)
-        }
-      )
+      const response = sourceConfig.sourceId === -1
+        ? await api.post('/api/api-customer/repository/filter/', {
+            table_name: sourceConfig.tableName,
+            schema: sourceConfig.schema || 'repository',
+            conditions: filterSpec,  // Send conditions array directly
+            page: 1,
+            page_size: 100,  // Get preview rows (limited to 100 for preview)
+          })
+        : await api.post(
+            `/api/api-customer/sources/${sourceConfig.sourceId}/filter/`,
+            {
+              table_name: sourceConfig.tableName,
+              schema: sourceConfig.schema || '',
+              conditions: filterSpec,  // Send conditions array directly
+              page: 1,
+              page_size: 100,  // Get preview rows (limited to 100 for preview)
+            }
+          )
 
       const total = response.data.total || response.data.filtered_count || 0
       const columns = response.data.columns || []
@@ -2067,6 +2097,12 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
                   {validationError}
                 </Alert>
               )}
+              {validationSuccess && (
+                <Alert status="success" size="sm">
+                  <AlertIcon />
+                  {validationSuccess}
+                </Alert>
+              )}
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">Expression Editor</FormLabel>
@@ -2075,12 +2111,15 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
                   onChange={(e) => {
                     setExpression(e.target.value)
                     setValidationError(null)
+                    setValidationSuccess(null)
                   }}
                   placeholder="e.g., name = 'John' AND age > 25 OR status IN ('active', 'pending')"
                   rows={6}
                   fontFamily="mono"
                   fontSize="sm"
-                  isDisabled={!directFilterMode && node ? (node.data.type === 'filter' && (!node.data.input_nodes || node.data.input_nodes.length === 0)) : false}
+                  // Allow editing even if `input_nodes` is not populated on the filter node.
+                  // Upstream metadata availability is handled separately via warnings/validation.
+                  isDisabled={false}
                 />
                 <Text fontSize="xs" color="gray.500" mt={1}>
                   Use column names, operators (=, !=, {'>'}, {'<'}, {'>='}, {'<='}, LIKE, IN, BETWEEN), and logical operators (AND, OR, NOT)
@@ -2093,24 +2132,56 @@ export const FilterConfigPanel: React.FC<FilterConfigPanelProps> = ({
                   size="sm"
                   colorScheme="blue"
                   variant="outline"
+                  isLoading={loading}
                   onClick={async () => {
                     if (!expression.trim()) {
                       setValidationError('Expression cannot be empty')
+                      setValidationSuccess(null)
                       return
                     }
 
-                    // For now, use client-side validation
-                    // TODO: Add backend validation endpoint
+                    // Fast client-side checks first
                     const exprError = validateExpression(expression)
                     if (exprError) {
                       setValidationError(exprError)
-                    } else {
-                      setValidationError(null)
-                      setError(null)
-                      // Could show a toast here
+                      setValidationSuccess(null)
+                      return
+                    }
+
+                    // Authoritative backend validation (Python + SQL parser via EXPLAIN)
+                    setLoading(true)
+                    try {
+                      const payload = {
+                        expression: expression,
+                        available_columns: availableColumns.map((col) => ({
+                          name: col.business_name || col.name,
+                          datatype: col.datatype || 'TEXT',
+                          technical_name: col.technical_name ?? col.name,
+                        })),
+                        sql_validation: true,
+                      }
+                      const result: any = await validationApi.validateExpression(payload)
+                      if (result?.success) {
+                        setValidationError(null)
+                        setError(null)
+                        setValidationSuccess('Expression is valid.')
+                      } else {
+                        const errs = Array.isArray(result?.errors) ? result.errors : ['Expression validation failed']
+                        setValidationError(errs.join(' | '))
+                        setValidationSuccess(null)
+                      }
+                    } catch (err: any) {
+                      const msg = err?.response?.data?.errors?.join?.(' | ')
+                        || err?.response?.data?.error
+                        || err?.message
+                        || 'Backend expression validation failed'
+                      setValidationError(msg)
+                      setValidationSuccess(null)
+                    } finally {
+                      setLoading(false)
                     }
                   }}
-                  isDisabled={!expression.trim() || (!directFilterMode && node ? (node.data.type === 'filter' && (!node.data.input_nodes || node.data.input_nodes.length === 0)) : false)}
+                  isDisabled={!expression.trim()}
                 >
                   Validate Expression
                 </Button>

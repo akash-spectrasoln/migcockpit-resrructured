@@ -1076,6 +1076,12 @@ def _build_postgresql_where_join(filter_spec: dict[str, Any], where_parts: list[
                     combined = f"({' AND '.join(sub_parts)})"
                 where_parts.append(combined)
                 where_params.extend(sub_params)
+    elif expr_type == 'expression':
+        # Raw SQL expression mode used by filter expression editor preview.
+        # Expression text is validated upstream before being sent here.
+        expression = str(filter_spec.get('expression') or '').strip()
+        if expression:
+            where_parts.append(f"({expression})")
         if operator == 'IS NULL':
             where_parts.append(f"{col_ref} IS NULL")
 

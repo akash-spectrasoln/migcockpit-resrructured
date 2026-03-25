@@ -28,6 +28,7 @@ def validate_pipeline(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) 
     - DAG is acyclic
     - All nodes are reachable
     - JOIN has >= 2 parents
+    - AGGREGATE has exactly 1 parent
     - Destination has exactly 1 parent
 
     Args:
@@ -72,6 +73,12 @@ def validate_pipeline(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) 
                     f"JOIN node '{node_id}' must have >= 2 parents, has {len(parents)}"
                 )
 
+        if node_type == "aggregate":
+            if len(parents) != 1:
+                raise PipelineValidationError(
+                    f"AGGREGATE node '{node_id}' must have exactly 1 parent, has {len(parents)}"
+                )
+
         # Validate destination nodes
         if node_type in ("destination", "destination-postgresql", "destination-postgres"):
             if len(parents) != 1:
@@ -80,7 +87,7 @@ def validate_pipeline(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) 
                 )
 
     # Validate node types
-    valid_types = {"source", "projection", "filter", "compute", "join",
+    valid_types = {"source", "projection", "filter", "compute", "join", "aggregate",
                    "destination", "destination-postgresql", "destination-postgres"}
 
     for node_id, node in node_map.items():

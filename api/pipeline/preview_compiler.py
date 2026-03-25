@@ -589,15 +589,78 @@ class SQLCompiler:
         input_cte = self.cte_map[input_node_id]
         input_metadata = self.metadata_map[input_node_id]
 
-        # Get filter conditions
+        # Get filter conditions / expression mode
         conditions = config.get('conditions', [])
-        if not conditions:
+        expression = (config.get('expression') or '').strip()
+        mode = (config.get('mode') or '').strip().lower()
+        is_expression_mode = mode == 'expression' and bool(expression)
+
+        if not conditions and not is_expression_mode:
             # No filter - just pass through
             cte_sql = f'SELECT * FROM {input_cte}'
             return cte_sql, input_metadata
 
-        # Apply filter locally (will be analyzed for pushdown in second pass)
-        filter_spec = parse_filter_from_canvas({'conditions': conditions})
+        if is_expression_mode:
+            input_cols = input_metadata.get('columns', [])
+            available_columns: list[str] = []
+            for c in input_cols:
+                nm = c.get('name') or c.get('technical_name') or c.get('db_name')
+                if nm:
+                    available_columns.append(str(nm))
+            try:
+                translator = ExpressionTranslator(available_columns, self.db_type)
+                where_clause = translator.translate(expression)
+            except Exception as e:
+                logger.warning("Preview filter expression translation failed for %s: %s", node_id, e)
+                where_clause = expression
+            cte_sql = f'SELECT * FROM {input_cte} WHERE {where_clause}' if where_clause else f'SELECT * FROM {input_cte}'
+            return cte_sql, input_metadata
+        # Apply filter locally (will be analyzed for pushdown in second pass).
+        # IMPORTANT: Conditions may reference technical_name; resolve to actual
+        # output column names so the generated WHERE uses real columns.
+        rewritten_conditions: list[dict[str, Any]] = []
+        input_cols = input_metadata.get('columns', [])
+        for cond in conditions:
+            col = (cond.get('column') or '').strip()
+            if not col:
+                rewritten_conditions.append(cond)
+                continue
+
+            # Try direct match on technical_name / name / db_name
+            meta = next(
+                (
+                    c
+                    for c in input_cols
+                    if (c.get('technical_name') or c.get('name')) == col
+                    or c.get('name') == col
+                    or c.get('db_name') == col
+                ),
+                None,
+            )
+
+            # If not found, strip node-id style prefix '<node>__' and try again
+            if not meta and '__' in col:
+                _, suffix = col.split('__', 1)
+                meta = next(
+                    (
+                        c
+                        for c in input_cols
+                        if (c.get('technical_name') or c.get('name')) == suffix
+                        or c.get('name') == suffix
+                        or c.get('db_name') == suffix
+                    ),
+                    None,
+                )
+
+            if meta:
+                resolved_name = meta.get('name') or meta.get('db_name') or col
+                new_cond = dict(cond)
+                new_cond['column'] = resolved_name
+                rewritten_conditions.append(new_cond)
+            else:
+                rewritten_conditions.append(cond)
+
+        filter_spec = parse_filter_from_canvas({'conditions': rewritten_conditions})
         where_clause, where_params = build_sql_where_clause(filter_spec, table_alias='')
 
         self.params.extend(where_params)
@@ -632,9 +695,13 @@ class SQLCompiler:
         input_cte = self.cte_map[input_node_id]
         input_metadata = self.metadata_map[input_node_id]
 
-        # Get filter conditions
+        # Get filter conditions / expression mode
         conditions = config.get('conditions', [])
-        if not conditions:
+        expression = (config.get('expression') or '').strip()
+        mode = (config.get('mode') or '').strip().lower()
+        is_expression_mode = mode == 'expression' and bool(expression)
+
+        if not conditions and not is_expression_mode:
             # No filter - just pass through
             cte_sql = f'SELECT * FROM {input_cte}'
             # Track column lineage (pass through - columns keep their origins)
@@ -645,6 +712,23 @@ class SQLCompiler:
                     if origin:
                         # Keep existing lineage
                         pass  # Already tracked
+            return cte_sql, input_metadata
+
+        if is_expression_mode:
+            # Expression mode stays local for preview CTE compilation.
+            input_cols = input_metadata.get('columns', [])
+            available_columns: list[str] = []
+            for c in input_cols:
+                nm = c.get('name') or c.get('technical_name') or c.get('db_name')
+                if nm:
+                    available_columns.append(str(nm))
+            try:
+                translator = ExpressionTranslator(available_columns, self.db_type)
+                where_clause = translator.translate(expression)
+            except Exception as e:
+                logger.warning("Preview filter expression translation failed for %s: %s", node_id, e)
+                where_clause = expression
+            cte_sql = f'SELECT * FROM {input_cte} WHERE {where_clause}' if where_clause else f'SELECT * FROM {input_cte}'
             return cte_sql, input_metadata
 
         # LINEAGE-BASED PUSHDOWN ANALYSIS
@@ -684,7 +768,51 @@ class SQLCompiler:
             # Filter cannot be pushed down - apply locally
             logger.info(f"Filter {node_id} cannot be pushed down - unsafe columns: {unsafe_columns}")
 
-            filter_spec = parse_filter_from_canvas({'conditions': conditions})
+            # Conditions may be expressed using technical_name; resolve to the
+            # actual output column / db column name before building WHERE.
+            rewritten_conditions: list[dict[str, Any]] = []
+            input_cols = input_metadata.get('columns', [])
+            for cond in conditions:
+                col = (cond.get('column') or '').strip()
+                if not col:
+                    rewritten_conditions.append(cond)
+                    continue
+
+                # Try direct match on technical_name / name / db_name
+                meta = next(
+                    (
+                        c
+                        for c in input_cols
+                        if (c.get('technical_name') or c.get('name')) == col
+                        or c.get('name') == col
+                        or c.get('db_name') == col
+                    ),
+                    None,
+                )
+
+                # If not found, strip node-id style prefix '<node>__' and try again
+                if not meta and '__' in col:
+                    _, suffix = col.split('__', 1)
+                    meta = next(
+                        (
+                            c
+                            for c in input_cols
+                            if (c.get('technical_name') or c.get('name')) == suffix
+                            or c.get('name') == suffix
+                            or c.get('db_name') == suffix
+                        ),
+                        None,
+                    )
+
+                if meta:
+                    resolved_name = meta.get('name') or meta.get('db_name') or col
+                    new_cond = dict(cond)
+                    new_cond['column'] = resolved_name
+                    rewritten_conditions.append(new_cond)
+                else:
+                    rewritten_conditions.append(cond)
+
+            filter_spec = parse_filter_from_canvas({'conditions': rewritten_conditions})
             where_clause, where_params = build_sql_where_clause(filter_spec, table_alias='')
 
             self.params.extend(where_params)
@@ -744,34 +872,112 @@ class SQLCompiler:
         conditions = config.get('conditions', [])
         output_columns = config.get('outputColumns', [])
 
-        # Build join conditions
+        # Get metadata for both tables (used for join condition and output validation)
+        left_metadata = self.metadata_map.get(left_node_id, {})
+        right_metadata = self.metadata_map.get(right_node_id, {})
+        left_cols_meta = left_metadata.get('columns', [])
+        right_cols_meta = right_metadata.get('columns', [])
+
+        # Build join conditions, resolving potential technical names or node-prefixed names
         join_conditions = []
         for cond in conditions:
-            left_col = cond.get('leftColumn', '')
-            right_col = cond.get('rightColumn', '')
+            left_col = (cond.get('leftColumn') or '').strip()
+            right_col = (cond.get('rightColumn') or '').strip()
             operator = cond.get('operator', '=')
 
-            if left_col and right_col:
-                # Remove alias prefix if present (e.g., "__L__.column" -> "column")
-                left_col_clean = left_col.replace('__L__.', '').replace('__L__."', '').replace('"', '')
-                right_col_clean = right_col.replace('__R__.', '').replace('__R__."', '').replace('"', '')
+            if not left_col or not right_col:
+                continue
 
-                # Add table aliases
-                left_ref = f'__L__."{left_col_clean}"'
-                right_ref = f'__R__."{right_col_clean}"'
+            # Remove alias prefixes in UI-specified columns (e.g. "__L__.column")
+            raw_left = left_col.replace('__L__.', '').replace('__L__."', '').replace('"', '')
+            raw_right = right_col.replace('__R__.', '').replace('__R__."', '').replace('"', '')
 
-                join_conditions.append(f'{left_ref} {operator} {right_ref}')
+            def _resolve_join_col(col_name: str, meta_cols: list[dict[str, Any]]) -> Optional[str]:
+                """Resolve a join column against metadata by technical_name/name/db_name, with node-id prefix stripping."""
+                if not col_name:
+                    return None
+                # Direct match
+                meta = next(
+                    (
+                        c
+                        for c in meta_cols
+                        if (c.get('technical_name') or c.get('name')) == col_name
+                        or c.get('name') == col_name
+                        or c.get('db_name') == col_name
+                    ),
+                    None,
+                )
+                # Try stripping node-id style prefix '<node>__'
+                if not meta and '__' in col_name:
+                    _, suffix = col_name.split('__', 1)
+                    meta = next(
+                        (
+                            c
+                            for c in meta_cols
+                            if (c.get('technical_name') or c.get('name')) == suffix
+                            or c.get('name') == suffix
+                            or c.get('db_name') == suffix
+                        ),
+                        None,
+                    )
+                    if meta:
+                        col_name = suffix
+
+                if meta:
+                    return meta.get('name') or meta.get('db_name') or col_name
+                return col_name
+
+            left_resolved = _resolve_join_col(raw_left, left_cols_meta)
+            right_resolved = _resolve_join_col(raw_right, right_cols_meta)
+
+            if not left_resolved or not right_resolved:
+                logger.warning(
+                    "Join %s: could not resolve columns '%s' or '%s' against metadata; skipping condition",
+                    node_id,
+                    left_col,
+                    right_col,
+                )
+                continue
+
+            left_ref = f'__L__."{left_resolved}"'
+            right_ref = f'__R__."{right_resolved}"'
+            join_conditions.append(f'{left_ref} {operator} {right_ref}')
 
         join_on = ' AND '.join(join_conditions) if join_conditions else '1=1'
 
         # Build SELECT clause with output columns
         # ENFORCE STRICT UNIQUENESS: All output column names must be unique
         resolved_names_map = {}  # Track resolved output names: (column_clean, source) -> final_output_name
+        def _resolve_output_col(col_name: str, meta_cols: list[dict[str, Any]]) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+            """Resolve output column by technical/name/db_name with common prefix stripping."""
+            if not col_name:
+                return None, None
+            candidates = [col_name]
+            if '__' in col_name:
+                candidates.append(col_name.split('__', 1)[1])
+            if col_name.startswith('_L_') or col_name.startswith('_R_'):
+                candidates.append(col_name[3:])
+            seen = set()
+            for cand in candidates:
+                if not cand or cand in seen:
+                    continue
+                seen.add(cand)
+                meta = next(
+                    (
+                        c for c in meta_cols
+                        if (c.get('technical_name') or c.get('name')) == cand
+                        or c.get('name') == cand
+                        or c.get('db_name') == cand
+                    ),
+                    None,
+                )
+                if meta:
+                    resolved = meta.get('name') or meta.get('db_name') or cand
+                    return resolved, meta
+            return None, None
 
         if output_columns:
-            # Get metadata for both tables to validate column existence
-            left_metadata = self.metadata_map.get(left_node_id, {})
-            right_metadata = self.metadata_map.get(right_node_id, {})
+            # Get metadata-derived column name sets for validation
             left_col_names = {col.get('name') for col in left_metadata.get('columns', [])}
             right_col_names = {col.get('name') for col in right_metadata.get('columns', [])}
 
@@ -796,10 +1002,14 @@ class SQLCompiler:
 
                     # Validate column exists in specified source, fallback to other source if not
                     if source == 'left':
-                        if column_clean in left_col_names:
+                        resolved_left, _left_meta = _resolve_output_col(column_clean, left_cols_meta)
+                        resolved_right, _right_meta = _resolve_output_col(column_clean, right_cols_meta)
+                        if resolved_left and resolved_left in left_col_names:
+                            column_clean = resolved_left
                             table_alias = '__L__'
                             actual_source = 'left'
-                        elif column_clean in right_col_names:
+                        elif resolved_right and resolved_right in right_col_names:
+                            column_clean = resolved_right
                             # Column doesn't exist in left, but exists in right - use right
                             table_alias = '__R__'
                             actual_source = 'right'
@@ -809,10 +1019,14 @@ class SQLCompiler:
                             logger.warning(f"Column '{column_clean}' not found in either left or right table, skipping")
                             continue
                     else:  # source == 'right'
-                        if column_clean in right_col_names:
+                        resolved_right, _right_meta = _resolve_output_col(column_clean, right_cols_meta)
+                        resolved_left, _left_meta = _resolve_output_col(column_clean, left_cols_meta)
+                        if resolved_right and resolved_right in right_col_names:
+                            column_clean = resolved_right
                             table_alias = '__R__'
                             actual_source = 'right'
-                        elif column_clean in left_col_names:
+                        elif resolved_left and resolved_left in left_col_names:
+                            column_clean = resolved_left
                             # Column doesn't exist in right, but exists in left - use left
                             table_alias = '__L__'
                             actual_source = 'left'
@@ -883,10 +1097,14 @@ class SQLCompiler:
                     # Check for uniqueness
                     if final_output_name in output_names_used:
                         # Auto-resolve: determine which table it's from (_L_/_R_ prefix)
-                        if column_clean in left_col_names:
+                        resolved_left, _ = _resolve_output_col(column_clean, left_cols_meta)
+                        resolved_right, _ = _resolve_output_col(column_clean, right_cols_meta)
+                        if resolved_left and resolved_left in left_col_names:
+                            column_clean = resolved_left
                             final_output_name = f"_L_{column_clean}"
                             table_alias = '__L__'
-                        elif column_clean in right_col_names:
+                        elif resolved_right and resolved_right in right_col_names:
+                            column_clean = resolved_right
                             final_output_name = f"_R_{column_clean}"
                             table_alias = '__R__'
                         else:
@@ -894,9 +1112,13 @@ class SQLCompiler:
                             continue
                         logger.warning(f"Column name conflict resolved: '{column_clean}' aliased as '{final_output_name}'")
                     else:
-                        if column_clean in left_col_names:
+                        resolved_left, _ = _resolve_output_col(column_clean, left_cols_meta)
+                        resolved_right, _ = _resolve_output_col(column_clean, right_cols_meta)
+                        if resolved_left and resolved_left in left_col_names:
+                            column_clean = resolved_left
                             table_alias = '__L__'
-                        elif column_clean in right_col_names:
+                        elif resolved_right and resolved_right in right_col_names:
+                            column_clean = resolved_right
                             table_alias = '__R__'
                         else:
                             logger.warning(f"Column '{column_clean}' not found in either table, skipping")
@@ -914,9 +1136,6 @@ class SQLCompiler:
         else:
             # No outputColumns specified - select all columns from both tables with explicit aliases
             # ENFORCE UNIQUENESS: Auto-resolve conflicts with _l/_r suffixes
-            left_metadata = self.metadata_map.get(left_node_id, {})
-            right_metadata = self.metadata_map.get(right_node_id, {})
-
             select_parts = []
             output_names_used = set()  # Track used output names for uniqueness
 
@@ -1004,20 +1223,28 @@ class SQLCompiler:
 
                     # Determine which table actually has this column (same logic as SELECT clause)
                     if source == 'left':
-                        if column_clean in left_col_names:
+                        resolved_left, _ = _resolve_output_col(column_clean, left_cols_meta)
+                        resolved_right, _ = _resolve_output_col(column_clean, right_cols_meta)
+                        if resolved_left and resolved_left in left_col_names:
+                            column_clean = resolved_left
                             actual_source = 'left'
                             input_metadata = left_metadata
-                        elif column_clean in right_col_names:
+                        elif resolved_right and resolved_right in right_col_names:
+                            column_clean = resolved_right
                             actual_source = 'right'
                             input_metadata = right_metadata
                         else:
                             # Column not found - skip
                             continue
                     else:  # source == 'right'
-                        if column_clean in right_col_names:
+                        resolved_right, _ = _resolve_output_col(column_clean, right_cols_meta)
+                        resolved_left, _ = _resolve_output_col(column_clean, left_cols_meta)
+                        if resolved_right and resolved_right in right_col_names:
+                            column_clean = resolved_right
                             actual_source = 'right'
                             input_metadata = right_metadata
-                        elif column_clean in left_col_names:
+                        elif resolved_left and resolved_left in left_col_names:
+                            column_clean = resolved_left
                             actual_source = 'left'
                             input_metadata = left_metadata
                         else:

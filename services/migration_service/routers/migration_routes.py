@@ -7,6 +7,7 @@ Job state is in Redis (shared with Celery worker) or in-memory fallback.
 import asyncio
 from datetime import datetime
 import logging
+import re
 from typing import Any, Optional
 import uuid
 
@@ -29,6 +30,112 @@ logger = logging.getLogger(__name__)
 WEBSOCKET_SERVICE_URL = "http://localhost:8004"
 
 router = APIRouter(tags=["migration"])
+
+
+def _normalize_config_keys(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize camelCase/snake_case config keys used across Django/FastAPI."""
+    if not isinstance(config, dict):
+        return {}
+    out = dict(config)
+    if "source_configs" not in out and isinstance(out.get("sourceConfigs"), dict):
+        out["source_configs"] = out["sourceConfigs"]
+    if "destination_configs" not in out and isinstance(out.get("destinationConfigs"), dict):
+        out["destination_configs"] = out["destinationConfigs"]
+    if "connection_config" not in out and isinstance(out.get("connectionConfig"), dict):
+        out["connection_config"] = out["connectionConfig"]
+    return out
+
+
+def _rewrite_saved_plan_for_job(plan_data: dict[str, Any], job_id: str) -> Optional[dict[str, Any]]:
+    """
+    Validate and rewrite cached plan SQL for the current job.
+    Returns rewritten plan dict when safe to reuse, else None.
+    """
+    if not isinstance(plan_data, dict):
+        return None
+
+    # Reject template placeholders that indicate broken/unrendered SQL.
+    def _has_placeholders(sql: str) -> bool:
+        return "{join_sql}" in sql or "{_quote_staging_table" in sql
+
+    def _has_forbidden_source_select_star(sql: str) -> bool:
+        if not isinstance(sql, str):
+            return False
+        compact = " ".join(sql.strip().split())
+        return bool(
+            re.search(
+                r"(?i)create\s+table\s+.+?\s+as\s+select\s+\*\s+from\s+",
+                compact,
+            )
+        )
+
+    old_job = str(plan_data.get("job_id") or "").strip()
+    if not old_job:
+        return None
+
+    old_job_token = old_job.replace("-", "_")
+    new_job_token = job_id.replace("-", "_")
+
+    rewritten = dict(plan_data)
+    rewritten["job_id"] = job_id
+
+    def _rewrite_sql(sql: str) -> Optional[str]:
+        if not isinstance(sql, str):
+            return None
+        if _has_placeholders(sql):
+            return None
+        if _has_forbidden_source_select_star(sql):
+            return None
+        # Rebind old cached staging table names to current job token.
+        return sql.replace(f"job_{old_job_token}_", f"job_{new_job_token}_")
+
+    levels = []
+    for lvl in plan_data.get("levels", []) or []:
+        qlist = []
+        for q in lvl.get("queries", []) or []:
+            new_sql = _rewrite_sql(q.get("sql"))
+            if not new_sql:
+                return None
+            q2 = dict(q)
+            q2["sql"] = new_sql
+            qlist.append(q2)
+        lvl2 = dict(lvl)
+        lvl2["queries"] = qlist
+        levels.append(lvl2)
+    rewritten["levels"] = levels
+
+    cleanup_sql = rewritten.get("cleanup_sql")
+    if isinstance(cleanup_sql, str):
+        new_cleanup = _rewrite_sql(cleanup_sql)
+        if not new_cleanup:
+            return None
+        rewritten["cleanup_sql"] = new_cleanup
+
+    for key in ("final_insert_sql", "destination_create_sql"):
+        val = rewritten.get(key)
+        if isinstance(val, str):
+            new_val = _rewrite_sql(val)
+            if not new_val:
+                return None
+            rewritten[key] = new_val
+
+    for key in ("final_inserts", "destination_creates"):
+        arr = rewritten.get(key)
+        if isinstance(arr, list):
+            out = []
+            for s in arr:
+                new_s = _rewrite_sql(s)
+                if not new_s:
+                    return None
+                out.append(new_s)
+            rewritten[key] = out
+
+    # Safety net: reject unresolved placeholders anywhere after rewrite.
+    rewritten_blob = str(rewritten)
+    if re.search(r"\{[^{}]+\}", rewritten_blob):
+        return None
+
+    return rewritten
 
 async def broadcast_update(job_id: str, message: dict[str, Any]) -> bool:
     """Broadcast update to WebSocket server."""
@@ -172,9 +279,13 @@ async def validate_pipeline_endpoint(request: Request):
         job_id = body.get("job_id", "validate_unknown")
         nodes = body.get("nodes", [])
         edges = body.get("edges", [])
-        config = body.get("config", {})
+        config = _normalize_config_keys(body.get("config", {}))
         canvas_id = body.get("canvas_id") or config.get("canvas_id")
-        connection_config = body.get("connection_config")
+        connection_config = (
+            body.get("connection_config")
+            or config.get("connection_config")
+            or config.get("connectionConfig")
+        )
         persist = body.get("persist", False)
 
         seen_edges = set()
@@ -193,6 +304,14 @@ async def validate_pipeline_endpoint(request: Request):
             detect_materialization_points,
             save_execution_plan_to_db,
             validate_pipeline,
+        )
+        # Ensure source nodes always have normalized node_output_metadata so
+        # plan build and SQL compilation don't fail when upstream metadata is missing.
+        from orchestrator.pipeline_executor import (
+            _ensure_source_metadata_for_plan,
+            _get_customer_connection_if_available,
+            _load_node_metadata_from_cache,
+            _enrich_config_with_metadata,
         )
 
         try:
@@ -230,7 +349,7 @@ async def validate_pipeline_endpoint(request: Request):
         pushdown_plan = {}
         pushed_filter_nodes = []
         try:
-            from planner.filter_optimizer import analyze_filter_pushdown
+            from planner.filter_pushdown import analyze_filter_pushdown
             pushdown_config = {**config, "canvas_id": canvas_id, "connection_config": connection_config}
             pushdown_result = analyze_filter_pushdown(nodes, edges, pushdown_config)
             if isinstance(pushdown_result, dict) and "plan" in pushdown_result:
@@ -306,7 +425,23 @@ async def execute_migration(request: MigrationRequest):
     t0 = _time.perf_counter()
     logger.info(f"[EXECUTE] ENTER canvas={request.canvas_id} t=0")
     try:
-        config = request.config or {}
+        config = _normalize_config_keys(request.config or {})
+        # Preserve top-level connection payloads when client doesn't nest them under config.
+        if not config.get("connection_config"):
+            top_cc = request.connection_config or request.connectionConfig
+            if isinstance(top_cc, dict):
+                config["connection_config"] = top_cc
+        if not config.get("destination_configs"):
+            top_dc = request.destination_configs or request.destinationConfigs
+            if isinstance(top_dc, dict):
+                config["destination_configs"] = top_dc
+        logger.info(
+            "[EXECUTE] config debug: source_configs=%s destination_configs=%s has_connection_config=%s keys(sample)=%s",
+            len(config.get("source_configs", {}) or {}),
+            len(config.get("destination_configs", {}) or {}),
+            bool(config.get("connection_config") or config.get("connectionConfig")),
+            list((config.get("source_configs", {}) or {}).keys())[:8],
+        )
         job_id = (request.job_id and str(request.job_id).strip()) or (config.get("job_id") and str(config.get("job_id")).strip()) or None
         if not job_id:
             job_id = str(uuid.uuid4())
@@ -389,9 +524,15 @@ async def execute_migration(request: MigrationRequest):
                     stored_hash = saved.get("plan_hash", "")
                     logger.info(f"[EXECUTE]   → found row: stored_hash={stored_hash[:16]}  current_hash={current_hash[:16]}  match={stored_hash == current_hash}")
                     if stored_hash == current_hash:
-                        logger.info(f"[EXECUTE] ✅ Reusing saved plan (no SQL/CTE compilation) canvas={canvas_id} source={label}")
-                        execution_plan = saved.get("plan_data")
-                        break
+                        cached_plan = saved.get("plan_data")
+                        rebound_plan = _rewrite_saved_plan_for_job(cached_plan, job_id)
+                        if rebound_plan is not None:
+                            logger.info(f"[EXECUTE] ✅ Reusing saved plan (rebinding SQL to current job) canvas={canvas_id} source={label}")
+                            execution_plan = rebound_plan
+                            break
+                        logger.warning(
+                            "[EXECUTE] Cached plan matched hash but is invalid/stale (placeholders or bad SQL); recompiling"
+                        )
                     else:
                         logger.info("[EXECUTE]   → hash mismatch — trying next DB or will recompile")
 
@@ -421,7 +562,7 @@ async def execute_migration(request: MigrationRequest):
                 request.canvas_id,
                 request.nodes,
                 request.edges,
-                request.config or {},
+                config,
                 execution_plan,
             )
         )

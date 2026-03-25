@@ -2,7 +2,7 @@
  * Canvas Page - Chakra UI Version
  * Main page for the data migration canvas
  */
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Box,
@@ -25,6 +25,8 @@ export const CanvasPage: React.FC = () => {
   const [searchParams] = useSearchParams()
   const { isAuthenticated, logout, checkAuth } = useAuthStore()
   const { setNodes, setEdges, setCanvas, canvasId } = useCanvasStore()
+  const isDirty = useCanvasStore((s) => s.isDirty)
+  const loadedCanvasIdRef = useRef<number | null>(null)
   const { data: canvasesData, isLoading } = useCanvases()
 
 
@@ -77,6 +79,13 @@ export const CanvasPage: React.FC = () => {
       if (targetCanvas) {
         setCanvas(targetCanvas.id, targetCanvas.name)
 
+        // Prevent background refetch from overwriting unsaved edits.
+        // If we've already hydrated this canvas and the user has local changes,
+        // keep the in-memory graph instead of reloading from the saved config.
+        if (loadedCanvasIdRef.current === targetCanvas.id && isDirty) {
+          return
+        }
+
         // Load canvas configuration
         const config = targetCanvas.configuration || {}
         const nodes: Node[] = (config.nodes || []).map((n: any) => ({
@@ -113,6 +122,7 @@ export const CanvasPage: React.FC = () => {
 
         setNodes(nodes)
         setEdges(dedupedEdges)
+        loadedCanvasIdRef.current = targetCanvas.id
         // Schema drift detection runs inside DataFlowCanvas once nodes are in the store
       }
     } else {
@@ -120,8 +130,9 @@ export const CanvasPage: React.FC = () => {
       setNodes([])
       setEdges([])
       setCanvas(null, '')
+      loadedCanvasIdRef.current = null
     }
-  }, [canvasIdFromUrl, canvasesData, setCanvas, setNodes, setEdges])
+  }, [canvasIdFromUrl, canvasesData, setCanvas, setNodes, setEdges, isDirty])
 
 
   const handleLogout = () => {

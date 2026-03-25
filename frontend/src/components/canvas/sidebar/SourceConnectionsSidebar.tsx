@@ -27,7 +27,7 @@ import {
 } from '@chakra-ui/react'
 import { useColorModeValue } from '../../../hooks/useColorModeValue'
 import { Database, ChevronDown, ChevronRight, Search, X, Trash2, RefreshCw } from 'lucide-react'
-import { connectionApi } from '../../../services/api'
+import { connectionApi, sourceTableApi } from '../../../services/api'
 import { TablesList } from './TablesList'
 
 interface Source {
@@ -53,6 +53,11 @@ interface SourceConnectionsSidebarProps {
   hasTableFilter?: (sourceId: number, tableName: string, schema?: string) => boolean
 }
 
+interface RepositoryTable {
+  schema: string
+  table_name: string
+}
+
 export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> = ({
   selectedSourceId,
   onSourceSelect,
@@ -70,6 +75,9 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
   const [searchTerm, setSearchTerm] = useState('')
   const [forceRefreshSourceId, setForceRefreshSourceId] = useState<number | null>(null)
   const [sourceToDelete, setSourceToDelete] = useState<Source | null>(null)
+  const [repositoryTables, setRepositoryTables] = useState<RepositoryTable[]>([])
+  const [repositoryLoading, setRepositoryLoading] = useState(false)
+  const [activeSection, setActiveSection] = useState<'remote' | 'repository'>('remote')
   const cancelRef = useRef<HTMLButtonElement | null>(null)
 
   const bg = useColorModeValue('white', 'gray.800')
@@ -79,6 +87,7 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
   // Load sources on mount
   useEffect(() => {
     loadSources()
+    loadRepositoryTables()
   }, [])
 
   // Set selected source when selectedSourceId changes
@@ -106,6 +115,18 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
       console.error('Failed to load sources:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadRepositoryTables = async (search: string = '') => {
+    setRepositoryLoading(true)
+    try {
+      const data = await sourceTableApi.repositoryTables(search ? { search } : undefined)
+      setRepositoryTables(Array.isArray(data?.tables) ? data.tables : [])
+    } catch (error) {
+      console.error('Failed to load repository tables:', error)
+    } finally {
+      setRepositoryLoading(false)
     }
   }
 
@@ -161,6 +182,9 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
     source.source_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     source.db_type?.toLowerCase().includes(searchTerm.toLowerCase())
   )
+  const filteredRepositoryTables = repositoryTables.filter((t) =>
+    `${t.schema}.${t.table_name}`.toLowerCase().includes(searchTerm.toLowerCase())
+  )
 
   if (loading) {
     return (
@@ -200,9 +224,13 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
             <Search size={16} />
           </InputLeftElement>
           <Input
-            placeholder="Search sources..."
+            placeholder="Search remote/repository..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value
+              setSearchTerm(next)
+              loadRepositoryTables(next)
+            }}
           />
           {searchTerm && (
             <InputRightElement>
@@ -218,10 +246,30 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
         </InputGroup>
       </Box>
 
-      {/* Sources List */}
+      {/* Top-level section switch */}
+      <HStack px={4} py={2} spacing={2} borderBottomWidth="1px" borderColor={borderColor}>
+        <Button
+          size="xs"
+          variant={activeSection === 'remote' ? 'solid' : 'outline'}
+          colorScheme="blue"
+          onClick={() => setActiveSection('remote')}
+        >
+          Remote
+        </Button>
+        <Button
+          size="xs"
+          variant={activeSection === 'repository' ? 'solid' : 'outline'}
+          colorScheme="purple"
+          onClick={() => setActiveSection('repository')}
+        >
+          Repository
+        </Button>
+      </HStack>
+
+      {/* Section content */}
       <Box flex={1} overflowY="auto">
         <VStack align="stretch" spacing={0} p={2}>
-          {filteredSources.length === 0 ? (
+          {activeSection === 'remote' ? (filteredSources.length === 0 ? (
             <Box p={4} textAlign="center">
               <Text fontSize="sm" color="gray.500">
                 {searchTerm ? 'No sources found' : 'No source connections'}
@@ -316,6 +364,7 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
                       {isExpanded && (
                         <TablesList
                           sourceId={source.source_id}
+                          section="remote"
                           onTableDrag={onTableDrag}
                           onQuickFilter={onQuickFilter}
                           onTableClick={onTableClick}
@@ -330,7 +379,69 @@ export const SourceConnectionsSidebar: React.FC<SourceConnectionsSidebarProps> =
                 </Box>
               )
             })
-          )}
+          )) : (
+            repositoryLoading ? (
+            <Box p={4} textAlign="center">
+              <Spinner size="sm" />
+            </Box>
+          ) : filteredRepositoryTables.length === 0 ? (
+            <Box p={4} textAlign="center">
+              <Text fontSize="sm" color="gray.500">
+                {searchTerm ? 'No repository tables found' : 'No repository tables'}
+              </Text>
+            </Box>
+          ) : (
+            filteredRepositoryTables.map((table, idx) => (
+              <Box
+                key={`repo-${table.schema}.${table.table_name}-${idx}`}
+                p={3}
+                borderRadius="md"
+                mb={1}
+                cursor="grab"
+                _hover={{ bg: hoverBg }}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/reactflow', JSON.stringify({
+                    type: 'table',
+                    table: table,
+                    sourceId: -1,
+                    isRepository: true,
+                  }))
+                  onTableDrag?.(table as any)
+                }}
+                onClick={() => onTableClick?.(table as any, -1)}
+              >
+                <HStack spacing={2} justify="space-between">
+                  <HStack spacing={2} minW={0}>
+                    <Database size={16} />
+                    <VStack align="start" spacing={0} minW={0}>
+                      <Text fontSize="sm" isTruncated title={table.table_name}>
+                        {table.table_name}
+                      </Text>
+                      <Badge size="sm" colorScheme="purple">
+                        {table.schema}
+                      </Badge>
+                    </VStack>
+                  </HStack>
+                  <HStack spacing={1}>
+                    <Tooltip label="Quick Filter">
+                      <IconButton
+                        aria-label="Quick Filter"
+                        icon={<RefreshCw size={12} />}
+                        size="xs"
+                        variant="ghost"
+                        colorScheme="blue"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onQuickFilter?.(table as any, -1)
+                        }}
+                      />
+                    </Tooltip>
+                  </HStack>
+                </HStack>
+              </Box>
+            ))
+          ))}
         </VStack>
       </Box>
       {/* Delete source confirmation dialog */}

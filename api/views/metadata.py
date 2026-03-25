@@ -209,7 +209,12 @@ class MetadataViewSet(viewsets.ViewSet):
 
         nodes = request.data.get('nodes', [])
         edges = request.data.get('edges', [])
-        canvas_id = request.data.get('canvas_id')
+        canvas_id = (
+            request.data.get('canvas_id')
+            or request.data.get('canvasId')
+            or request.data.get('config', {}).get('canvas_id')
+            or request.data.get('config', {}).get('canvasId')
+        )
 
         logger.info(f"[VALIDATE] Starting validation for canvas {canvas_id}")
         logger.info(f"[VALIDATE] Received {len(nodes)} nodes, {len(edges)} edges")
@@ -239,7 +244,11 @@ class MetadataViewSet(viewsets.ViewSet):
                 logger.error(f"[VALIDATE] DAG validation failed: {dag_error}")
 
         # Check for at least one source
-        source_nodes = [n for n in node_list if n.get('type') == 'source' or n.get('data', {}).get('type') == 'source']
+        source_nodes = [
+            n for n in node_list
+            if str(n.get('type', '')).lower().startswith('source')
+            or str(n.get('data', {}).get('type', '')).lower().startswith('source')
+        ]
         if len(source_nodes) == 0:
             errors.append("At least one source node is required")
             logger.error("[VALIDATE] No source nodes found")
@@ -270,7 +279,7 @@ class MetadataViewSet(viewsets.ViewSet):
                 if not config.get('tableName'):
                     errors.append(f"Source node '{node_data.get('label', node.get('id'))}' is missing table name")
 
-            elif node_type == 'destination' or (isinstance(node_type, str) and node_type.startswith('destination-')):
+            elif node_type == 'destination' or (isinstance(node_type, str) and node_type.startswith('destination')):
                 is_customer_db = config.get('destinationType') == 'customer_database'
                 if not is_customer_db and not config.get('destinationId'):
                     errors.append(f"Destination node '{node_data.get('label', node.get('id'))}' is missing destination connection")

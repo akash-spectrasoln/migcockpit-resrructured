@@ -18,7 +18,14 @@ import type {
 
 /** Build a fast-lookup set of available column names */
 function availableSet(schema: ColumnSchema[]): Set<string> {
-  return new Set(schema.map((c) => c.name).filter(Boolean))
+  const out = new Set<string>()
+  schema.forEach((c) => {
+    if (c?.name) out.add(c.name)
+    // Allow configs to reference stable technical identifiers too
+    if ((c as any)?.technical_name) out.add((c as any).technical_name)
+    if ((c as any)?.column) out.add((c as any).column)
+  })
+  return out
 }
 
 /** Does the identifier `colName` appear as a whole word in `code`? */

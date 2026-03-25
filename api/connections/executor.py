@@ -280,13 +280,20 @@ def get_table_schema(
             WHERE table_schema = 'GENERAL' AND table_name = 'source'
         """)
         columns = [row[0] for row in cursor.fetchall()]
+        name_column = 'source_name' if 'source_name' in columns else 'src_name'
+        config_column = 'source_config' if 'source_config' in columns else 'src_config'
 
         # Get source config
-        cursor.execute('''
-            SELECT {name_column}, {config_column}, created_on
+        name_column_sql = f'"{name_column}"'
+        config_column_sql = f'"{config_column}"'
+        cursor.execute(
+            f'''
+            SELECT {name_column_sql}, {config_column_sql}, created_on
             FROM "GENERAL".source
             WHERE id = %s
-        ''', (source_id,))
+            ''',
+            (source_id,),
+        )
 
         row = cursor.fetchone()
         if not row:

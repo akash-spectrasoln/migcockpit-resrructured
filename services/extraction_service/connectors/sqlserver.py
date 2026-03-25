@@ -407,3 +407,7 @@ def _build_sqlserver_where(filter_spec: dict[str, Any], where_parts: list[str], 
                     combined = f"({' AND '.join(sub_parts)})"
                 where_parts.append(combined)
                 where_params.extend(sub_params)
+    elif expr_type == 'expression':
+        expression = str(filter_spec.get('expression') or '').strip()
+        if expression:
+            where_parts.append(f"({expression})")

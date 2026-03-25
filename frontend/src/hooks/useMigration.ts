@@ -33,9 +33,9 @@ export const useExecuteMigration = () => {
     mutationFn: ({ canvasId, pipeline }: { canvasId: number; pipeline: any }) =>
       migrationApi.execute(canvasId, pipeline),
     onSuccess: (response) => {
-      const jobId = response.data.job_id
+      const jobId = (response as any)?.job_id ?? (response as any)?.data?.job_id
       queryClient.invalidateQueries({ queryKey: ['migrations'] })
-      queryClient.setQueryData(['migration', jobId], response.data)
+      queryClient.setQueryData(['migration', jobId], response)
     },
   })
 }

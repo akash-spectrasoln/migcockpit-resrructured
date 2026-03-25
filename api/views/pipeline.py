@@ -60,11 +60,18 @@ class FilterExecutionView(APIView):
             conditions = request.data.get('conditions', [])
             page = int(request.data.get('page', 1))
             page_size = int(request.data.get('page_size', 50))
+            is_expression_payload = isinstance(conditions, dict) and (conditions.get('type') == 'expression')
+            expression_text = str((conditions or {}).get('expression', '')).strip() if is_expression_payload else ''
 
             # Log request for debugging
             logger.info(f"FilterExecutionView request - source_id: {source_id}, table_name: {table_name}, schema: {schema}")
             logger.info(f"FilterExecutionView conditions: {conditions}")
-            logger.info(f"FilterExecutionView conditions type: {type(conditions)}, is_list: {isinstance(conditions, list)}")
+            logger.info(
+                "FilterExecutionView conditions type: %s, is_list: %s, is_expression: %s",
+                type(conditions),
+                isinstance(conditions, list),
+                is_expression_payload,
+            )
 
             if not table_name:
                 logger.error(f"FilterExecutionView: table_name is missing. Request data: {request.data}")
@@ -73,19 +80,32 @@ class FilterExecutionView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            if not conditions or not isinstance(conditions, list):
-                logger.error(f"FilterExecutionView: conditions invalid. Type: {type(conditions)}, Value: {conditions}")
+            if not conditions:
+                logger.error("FilterExecutionView: conditions missing")
                 return Response(
-                    {"error": f"conditions must be a non-empty array. Received: {type(conditions).__name__}"},
+                    {"error": "conditions is required"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            if len(conditions) == 0:
-                logger.error("FilterExecutionView: conditions array is empty")
-                return Response(
-                    {"error": "conditions must be a non-empty array"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            if is_expression_payload:
+                if not expression_text:
+                    return Response(
+                        {"error": "expression is required when conditions.type = 'expression'"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                if not isinstance(conditions, list):
+                    logger.error(f"FilterExecutionView: conditions invalid. Type: {type(conditions)}, Value: {conditions}")
+                    return Response(
+                        {"error": f"conditions must be a non-empty array. Received: {type(conditions).__name__}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                if len(conditions) == 0:
+                    logger.error("FilterExecutionView: conditions array is empty")
+                    return Response(
+                        {"error": "conditions must be a non-empty array"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
             # Get user and customer
             user = request.user
@@ -108,7 +128,9 @@ class FilterExecutionView(APIView):
                 FROM information_schema.columns
                 WHERE table_schema = 'GENERAL' AND table_name = 'source'
             """)
-            [row[0] for row in db_cursor.fetchall()]
+            col_names = [row[0] for row in db_cursor.fetchall()]
+            name_column = 'source_name' if 'source_name' in col_names else 'src_name'
+            config_column = 'source_config' if 'source_config' in col_names else 'src_config'
 
             db_cursor.execute(f'''
                 SELECT id, {name_column}, {config_column}, created_on
@@ -171,36 +193,42 @@ class FilterExecutionView(APIView):
             db_cursor.close()
             conn.close()
 
-            # Use reusable filter system to parse and validate filters
-            # Parse filter from canvas format to internal format
-            canvas_filter = {'conditions': conditions}
-            filter_spec = parse_filter_from_canvas(canvas_filter)
-            logger.info(f"FilterExecutionView parsed filter_spec: {filter_spec}")
+            if is_expression_payload:
+                # Pass expression payload through to extraction service connectors.
+                filter_spec = {'type': 'expression', 'expression': expression_text}
+                where_clause = expression_text
+                where_params = []
+                filters = filter_spec
+            else:
+                # Use reusable filter system to parse and validate filters
+                canvas_filter = {'conditions': conditions}
+                filter_spec = parse_filter_from_canvas(canvas_filter)
+                logger.info(f"FilterExecutionView parsed filter_spec: {filter_spec}")
 
-            # Build SQL WHERE clause for FastAPI (if needed for raw SQL)
-            where_clause, where_params = build_sql_where_clause(filter_spec)
-            logger.info(f"FilterExecutionView SQL where_clause: {where_clause}, params: {where_params}")
+                # Build SQL WHERE clause for observability/debugging
+                where_clause, where_params = build_sql_where_clause(filter_spec)
+                logger.info(f"FilterExecutionView SQL where_clause: {where_clause}, params: {where_params}")
 
-            # Also build filters list for FastAPI compatibility (legacy format)
-            filters = []
-            for condition in conditions:
-                value = condition.get('value', '')
-                # Handle BETWEEN operator value format
-                if condition.get('operator') == 'BETWEEN':
-                    if isinstance(value, str):
-                        try:
-                            value = json.loads(value)
-                        except Exception:
-                            parts = [v.strip() for v in value.split(',')]
-                            if len(parts) == 2:
-                                value = parts
+                # Build legacy filters list for extraction service compatibility
+                filters = []
+                for condition in conditions:
+                    value = condition.get('value', '')
+                    # Handle BETWEEN operator value format
+                    if condition.get('operator') == 'BETWEEN':
+                        if isinstance(value, str):
+                            try:
+                                value = json.loads(value)
+                            except Exception:
+                                parts = [v.strip() for v in value.split(',')]
+                                if len(parts) == 2:
+                                    value = parts
 
-                filters.append({
-                    'column': condition.get('column', ''),
-                    'operator': condition.get('operator', '='),
-                    'value': value,
-                    'logicalOperator': condition.get('logicalOperator', 'AND'),
-                })
+                    filters.append({
+                        'column': condition.get('column', ''),
+                        'operator': condition.get('operator', '='),
+                        'value': value,
+                        'logicalOperator': condition.get('logicalOperator', 'AND'),
+                    })
 
             # Call FastAPI service to fetch filtered table data
             try:
@@ -441,7 +469,8 @@ class JoinExecutionView(APIView):
                 FROM information_schema.columns
                 WHERE table_schema = 'GENERAL' AND table_name = 'source'
             """)
-            [row[0] for row in db_cursor.fetchall()]
+            col_names = [row[0] for row in db_cursor.fetchall()]
+            config_column = 'source_config' if 'source_config' in col_names else 'src_config'
 
             db_cursor.execute(f'''
                 SELECT {config_column}, created_on

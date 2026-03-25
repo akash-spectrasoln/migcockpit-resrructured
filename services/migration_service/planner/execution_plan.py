@@ -513,26 +513,85 @@ def _parse_select_columns_from_create_as(sql: str) -> list[str]:
         return []
     select_list = match.group(1).strip()
     cols: list[str] = []
-    # Split by comma, respecting quoted strings
+    # Split by top-level commas, respecting quoted identifiers/strings.
     depth = 0
     start = 0
-    for i, c in enumerate(select_list + ","):
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+    n = len(select_list)
+    while i <= n:
+        c = select_list[i] if i < n else ","
+
+        if in_double_quote:
+            if c == '"':
+                # Handle escaped "" inside quoted identifiers.
+                if i + 1 < n and select_list[i + 1] == '"':
+                    i += 2
+                    continue
+                in_double_quote = False
+            i += 1
+            continue
+
+        if in_single_quote:
+            if c == "'":
+                # Handle escaped '' inside single-quoted string literals.
+                if i + 1 < n and select_list[i + 1] == "'":
+                    i += 2
+                    continue
+                in_single_quote = False
+            i += 1
+            continue
+
+        if c == '"':
+            in_double_quote = True
+            i += 1
+            continue
+
+        if c == "'":
+            in_single_quote = True
+            i += 1
+            continue
+
         if c == "(":
             depth += 1
-        elif c == ")":
+            i += 1
+            continue
+        if c == ")":
             depth -= 1
-        elif c == "," and depth == 0:
+            i += 1
+            continue
+
+        if c == "," and depth == 0:
             part = select_list[start:i].strip()
             start = i + 1
-            # Match AS "alias" or "col" (alias = col)
-            as_m = re.search(r'\s+AS\s+"([^"]+)"\s*$', part, re.IGNORECASE)
+
+            # Match AS "alias" / AS 'alias' (alias = output column name)
+            as_m = re.search(
+                r'\s+AS\s+(?:"([^"]+)"|\'([^\']+)\')\s*$', part, re.IGNORECASE
+            )
             if as_m:
-                cols.append(as_m.group(1))
+                cols.append(as_m.group(1) or as_m.group(2))
             else:
-                col_m = re.match(r'"([^"]+)"', part.strip())
+                # Match "col" (common case for CREATE TABLE AS ... SELECT "col", ...)
+                col_m = re.match(r'^"([^"]+)"\s*$', part)
                 if col_m:
                     cols.append(col_m.group(1))
-    return cols
+
+            i += 1
+            continue
+
+        i += 1
+
+    # Dedupe while preserving first occurrence order.
+    seen_lower: set[str] = set()
+    deduped: list[str] = []
+    for c in cols:
+        if c.lower() in seen_lower:
+            continue
+        seen_lower.add(c.lower())
+        deduped.append(c)
+    return deduped
 
 def _build_staging_columns_from_plan(levels: list[Any], job_id: str) -> dict[str, list[str]]:
     """Build node_id -> ordered list of staging column names from compiled plan levels."""
@@ -577,18 +636,66 @@ def _normalize_column_to_business_name(name: str, all_names: list[str]) -> str:
     # Keep _L_X and _R_X as-is (business name = prefix format, same as UI)
     return name
 
+def _derive_business_name_from_technical_name(technical_name: str) -> str:
+    """
+    Derive a display/business name from a technical key.
+
+    Convention (confirmed by your earlier tests):
+      - technical keys are typically in the form '<8hex>_<col>'
+    """
+    if not isinstance(technical_name, str):
+        return technical_name
+    tn = technical_name.strip()
+    if not tn:
+        return tn
+
+    # '<8hex>_<col>' -> '<col>'
+    m = re.match(r"^[0-9a-fA-F]{8}_(.+)$", tn)
+    if m:
+        return m.group(1)
+
+    # Optional safety for uuid-prefixed technical naming: '<uuid>__<col>' -> '<col>'
+    if "__" in tn:
+        parts = tn.split("__", 1)
+        if len(parts) == 2 and parts[1]:
+            return parts[1]
+
+    return tn
+
 def _normalize_anchor_columns(columns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalize columns: remove _L_/_R_ for destination, use business names. Keep orig_name for staging lookup."""
     if not columns:
         return []
     all_names = [c.get("business_name") or c.get("name") or "" for c in columns]
+    # Technical keys typically look like "<8hex>_<col>" (e.g. "2f9b6281_status").
+    technical_key_re = re.compile(r"^[0-9a-fA-F]{8}_.+")
     out = []
     for c in columns:
-        business_name = c.get("business_name") or c.get("label") or c.get("name")
+        had_business_name = bool(c.get("business_name"))
+        raw_business_name = c.get("business_name") or c.get("label") or c.get("name")
+        technical_name = c.get("technical_name") or raw_business_name
+
+        business_name = raw_business_name
+
+        # If business/display name is missing, derive it from technical_name.
+        if not had_business_name and technical_name:
+            business_name = _derive_business_name_from_technical_name(str(technical_name))
+
+        # If business_name is present but still looks like a technical key, derive again.
+        # This prevents destination CREATE TABLE from using technical column names.
+        if business_name and isinstance(business_name, str) and not (
+            business_name.startswith("_L_") or business_name.startswith("_R_")
+        ):
+            looks_technical = bool(technical_key_re.match(business_name)) or ("__" in business_name)
+            derived = _derive_business_name_from_technical_name(technical_name) if technical_name else None
+            if looks_technical and derived and derived != business_name:
+                business_name = derived
+
         if not business_name:
             continue
-        normalized = _normalize_column_to_business_name(business_name, all_names)
-        out.append({**c, "business_name": normalized, "orig_name": business_name})
+
+        normalized = _normalize_column_to_business_name(str(business_name), all_names)
+        out.append({**c, "business_name": normalized, "orig_name": str(raw_business_name or business_name)})
     return out
 
 def _generate_destination_create_one(
@@ -631,16 +738,18 @@ def _generate_destination_create_one(
         anchor_meta = config.get("node_output_metadata", {}).get(_find_schema_anchor(parent_id, reverse_adjacency, node_map), {})
         parent_meta = config.get("node_output_metadata", {}).get(parent_id, {})
         anchor_columns = _normalize_anchor_columns(anchor_meta.get("columns", []))
-        parent_columns = parent_meta.get("columns", [])
+        # Normalize parent columns too: they can contain technical keys in `business_name`
+        # (e.g. "<uuid>__cmp_name"), which would otherwise leak into destination CREATE.
+        parent_columns = _normalize_anchor_columns(parent_meta.get("columns", []))
         tech_to_business = {c.get("technical_name") or c.get("name"): c.get("business_name") or c.get("name") for c in anchor_columns + parent_columns if (c.get("technical_name") or c.get("name")) and (c.get("business_name") or c.get("name"))}
         tech_to_business.update({c.get("name"): c.get("business_name") or c.get("name") for c in anchor_columns + parent_columns if c.get("name")})
         columns_meta = []
         for sc in staging_cols:
             business_name = tech_to_business.get(sc)
             if not business_name:
-                # Fallback: technical_name = {node_prefix}_{col_name} (e.g. f9a679f3_upper_name -> upper_name)
-                m = re.match(r"^[a-f0-9]{8}_(.+)$", sc, re.IGNORECASE)
-                business_name = m.group(1) if m else sc
+                # Fallback: derive display/business name from the technical key.
+                # Covers both "<8hex>_<col>" and "<uuid>__<col>" formats.
+                business_name = _derive_business_name_from_technical_name(sc) or sc
             if business_name:
                 columns_meta.append({"business_name": business_name, "technical_name": sc})
     else:
@@ -767,7 +876,7 @@ def _generate_final_insert_one(
     anchor_meta = config.get("node_output_metadata", {}).get(schema_anchor_id, {})
     parent_meta = config.get("node_output_metadata", {}).get(parent_id, {})
     anchor_columns = _normalize_anchor_columns(anchor_meta.get("columns", []))
-    parent_columns = parent_meta.get("columns", [])
+    parent_columns = _normalize_anchor_columns(parent_meta.get("columns", []))
 
     # Staging columns that actually exist in parent's output.
     # Prefer parsed columns from compiled staging SQL (source of truth); fallback to metadata.
@@ -842,10 +951,8 @@ def _generate_final_insert_one(
         for staging_col in staging_cols_list:
             business_name = tech_to_business.get(staging_col)
             if not business_name:
-                # Fallback: technical_name = {node_prefix}_{col_name} (e.g. f9a679f3_upper_name -> upper_name)
-                # Use business name for destination so calculated columns show as upper_name, not technical name
-                m = re.match(r"^[a-f0-9]{8}_(.+)$", staging_col, re.IGNORECASE)
-                business_name = m.group(1) if m else staging_col
+                # Fallback: derive display/business name from the technical key.
+                business_name = _derive_business_name_from_technical_name(staging_col) or staging_col
             dest_cols.append(f'"{business_name}"')
             select_expressions.append(f'"{staging_col}"')
         if dest_cols:

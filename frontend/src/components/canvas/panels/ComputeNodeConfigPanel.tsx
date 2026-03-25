@@ -2,7 +2,7 @@
  * Compute Node Configuration Panel
  * IDE-style code editor for custom DataFrame transformations
  */
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
     Box,
     VStack,
@@ -87,6 +87,8 @@ export const ComputeNodeConfigPanel: React.FC<ComputeNodeConfigPanelProps> = ({
     const codeTheme = useColorModeValue(undefined, oneDark)
 
     const previousNodeId = React.useRef<string | null>(null)
+    const liveSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const lastPushedConfigRef = useRef<string>('')
 
     /**
      * Normalize code to canonical form by removing comments, example code, and malformed text.
@@ -264,21 +266,40 @@ _output_df = _input_df.copy()`
         setErrors([])
     }, [node, code, requirements, language, onUpdate, businessName, technicalName, toast])
 
-    // Live updates: push config when code/requirements/language change (no per-node Save button).
+    // Live updates (debounced): avoid updating canvas store on every keystroke.
     useEffect(() => {
         if (!node || !code.trim()) return
+
         const config = {
             ...(node.data?.config || {}),
             code,
             requirements,
             language,
         }
-        onUpdate(node.id, {
+        const payload = {
             config,
             business_name: businessName || 'Compute',
             technical_name: technicalName || node.id,
             output_metadata: null,
-        })
+        }
+        const signature = JSON.stringify(payload)
+        if (signature === lastPushedConfigRef.current) return
+
+        if (liveSaveTimerRef.current) {
+            clearTimeout(liveSaveTimerRef.current)
+        }
+        liveSaveTimerRef.current = setTimeout(() => {
+            onUpdate(node.id, payload)
+            lastPushedConfigRef.current = signature
+            liveSaveTimerRef.current = null
+        }, 350)
+
+        return () => {
+            if (liveSaveTimerRef.current) {
+                clearTimeout(liveSaveTimerRef.current)
+                liveSaveTimerRef.current = null
+            }
+        }
     }, [node?.id, code, requirements, language, businessName, technicalName, onUpdate])
 
     const handleRun = useCallback(async () => {

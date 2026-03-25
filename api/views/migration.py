@@ -78,6 +78,12 @@ class MigrationJobViewSet(viewsets.ModelViewSet):
             from api.utils.migration_config_builder import build_migration_config
             config = build_migration_config(canvas, customer, config)
 
+            logger.info(
+                "MigrationJob execute: config after build_migration_config source_configs=%s destination_configs=%s",
+                len((config or {}).get("source_configs") or {}),
+                len((config or {}).get("destination_configs") or {}),
+            )
+
             # Create migration job record.
             # Do not set created_by=user: in this codebase user.pk is the email (string) for
             # in-memory auth, but MigrationJob.created_by_id expects an integer FK.

@@ -1815,12 +1815,41 @@ SUPPORTED_FUNCTIONS = {
 # SQL operators
 OPERATORS = ['+', '-', '*', '/', '=', '!=', '<>', '<', '>', '<=', '>=', 'AND', 'OR', 'NOT', 'LIKE', 'ILIKE', 'IN', 'IS', 'IS NOT']
 
+# SQL keywords/type names that should not be validated as column identifiers
+SQL_NON_COLUMN_TOKENS = {
+    'AS', 'NULL', 'TRUE', 'FALSE',
+    'VARCHAR', 'CHAR', 'TEXT', 'STRING',
+    'INT', 'INTEGER', 'BIGINT', 'SMALLINT',
+    'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'REAL',
+    'DATE', 'TIME', 'TIMESTAMP', 'DATETIME', 'BOOLEAN', 'BOOL',
+}
+
 class ExpressionValidator:
     """Validates SQL expressions for calculated columns"""
 
     def __init__(self, expression: str, available_columns: list[dict[str, Any]], expected_data_type: Optional[str] = None):
         self.expression = expression.strip()
-        self.available_columns = {col.get('name', col) if isinstance(col, dict) else col: col for col in available_columns}
+        # Build a lookup that accepts name/business_name/technical_name/db_name aliases.
+        self.available_columns = {}
+        for col in available_columns:
+            if isinstance(col, dict):
+                aliases = [
+                    col.get('name'),
+                    col.get('business_name'),
+                    col.get('technical_name'),
+                    col.get('db_name'),
+                    col.get('column_name'),
+                ]
+                for alias in aliases:
+                    if alias is None:
+                        continue
+                    alias_str = str(alias).strip()
+                    if alias_str:
+                        self.available_columns[alias_str] = col
+            else:
+                key = str(col).strip()
+                if key:
+                    self.available_columns[key] = col
         self.expected_data_type = expected_data_type
         self.errors: list[str] = []
         self.inferred_type: Optional[str] = None
@@ -1951,6 +1980,8 @@ class ExpressionValidator:
             # Skip operators, functions, literals
             if token in OPERATORS or token.upper() in SUPPORTED_FUNCTIONS:
                 continue
+            if token.upper() in SQL_NON_COLUMN_TOKENS:
+                continue
 
             # Skip string literals
             if token.startswith("'") and token.endswith("'"):
@@ -1986,7 +2017,15 @@ class ExpressionValidator:
                                 break
 
                 if not column_found:
-                    self.errors.append(f"Unknown column: '{token}'")
+                    sample_cols = sorted(
+                        {
+                            str(k)
+                            for k in self.available_columns.keys()
+                            if isinstance(k, str) and k and "__" not in k and "-" not in k
+                        }
+                    )[:12]
+                    hint = f" Available columns: {', '.join(sample_cols)}" if sample_cols else ""
+                    self.errors.append(f"Unknown column: '{token}'.{hint}")
 
     def _parse_function_call(self, func_name: str, start_idx: int, tokens: list[str]) -> tuple:
         """Parse a function call and return (end_index, arguments_list, has_arithmetic_in_args)"""
@@ -2048,6 +2087,7 @@ class ExpressionValidator:
 
     def _validate_functions(self, tokens: list[str]) -> None:
         """Validate that all function names are supported and have correct signatures"""
+        zero_arg_keywords = {"CURRENT_DATE", "CURRENT_TIMESTAMP"}
         i = 0
         while i < len(tokens):
             token = tokens[i]
@@ -2055,6 +2095,40 @@ class ExpressionValidator:
 
             if token_upper in SUPPORTED_FUNCTIONS:
                 func_info = SUPPORTED_FUNCTIONS[token_upper]
+
+                # PostgreSQL treats CURRENT_DATE/CURRENT_TIMESTAMP as special keywords.
+                # Accept bare usage (without parentheses) and reject "()" form with a clear message.
+                if token_upper in zero_arg_keywords:
+                    if i + 1 < len(tokens) and tokens[i + 1] == '(':
+                        self.errors.append(f"Use '{token_upper}' without parentheses")
+                    i += 1
+                    continue
+
+                # CAST has SQL-specific syntax: CAST(expr AS type)
+                if token_upper == 'CAST':
+                    end_idx, arguments, _ = self._parse_function_call(token, i, tokens)
+                    if end_idx == i:
+                        self.errors.append("Function 'CAST' must be followed by opening parenthesis")
+                        i += 1
+                        continue
+
+                    # Validate "AS" appears at top level inside CAST(...)
+                    cast_tokens = tokens[i + 2:end_idx]  # inside CAST(...)
+                    depth = 0
+                    has_top_level_as = False
+                    for t in cast_tokens:
+                        if t == '(':
+                            depth += 1
+                        elif t == ')':
+                            depth -= 1
+                        elif depth == 0 and str(t).upper() == 'AS':
+                            has_top_level_as = True
+                            break
+                    if not has_top_level_as:
+                        self.errors.append("CAST must use SQL syntax: CAST(expression AS type)")
+
+                    i = end_idx + 1
+                    continue
 
                 # Parse function call
                 end_idx, arguments, has_arithmetic = self._parse_function_call(token, i, tokens)
@@ -2290,6 +2364,96 @@ class ValidateExpressionView(APIView):
     authentication_classes = [JWTCookieAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _map_to_pg_type(datatype) -> str:
+        dt = (datatype or "TEXT").strip().upper()
+        if any(x in dt for x in ("INT", "SERIAL")):
+            return "integer"
+        if any(x in dt for x in ("NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL")):
+            return "numeric"
+        if any(x in dt for x in ("BOOL",)):
+            return "boolean"
+        if "DATE" in dt and "TIME" not in dt:
+            return "date"
+        if "TIMESTAMP" in dt or "DATETIME" in dt or "TIME" in dt:
+            return "timestamp"
+        return "text"
+
+    def _validate_expression_sql_syntax(
+        self,
+        expression: str,
+        available_columns: list[dict[str, Any]],
+        expression_context: str = "filter",
+    ):
+        """
+        Server-side SQL parser validation using PostgreSQL EXPLAIN.
+        Builds an in-memory typed row so expressions with column references can be parsed safely.
+        Returns error text on failure, or None when valid.
+        """
+        if not expression or not available_columns:
+            return "Expression and available columns are required for SQL validation"
+
+        # Build one-row typed projection: SELECT NULL::text AS "col_a", NULL::integer AS "col_b", ...
+        select_parts = []
+        seen = set()
+        for col in available_columns:
+            name = (col.get("name") or col.get("business_name") or col.get("technical_name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            pg_type = self._map_to_pg_type(col.get("datatype"))
+            safe_name = name.replace('"', '""')
+            select_parts.append(f'NULL::{pg_type} AS "{safe_name}"')
+
+        if not select_parts:
+            return "No valid columns available for SQL validation"
+
+        typed_row_sql = "SELECT " + ", ".join(select_parts)
+        # Use different SQL shape by context:
+        # - filter: expression must be boolean (used in WHERE)
+        # - calculated: expression can be scalar (selected as a column)
+        if (expression_context or "").strip().lower() == "calculated":
+            sql = f'EXPLAIN SELECT ({expression}) AS "__expr_result" FROM ({typed_row_sql}) __expr_cols LIMIT 0'
+        else:
+            sql = f"EXPLAIN SELECT 1 FROM ({typed_row_sql}) __expr_cols WHERE {expression} LIMIT 0"
+
+        conn = None
+        cur = None
+        try:
+            conn = psycopg2.connect(
+                host=settings.DATABASES["default"]["HOST"],
+                port=settings.DATABASES["default"]["PORT"],
+                user=settings.DATABASES["default"]["USER"],
+                password=settings.DATABASES["default"]["PASSWORD"],
+                database=settings.DATABASES["default"]["NAME"],
+            )
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(sql)
+            return None
+        except Exception as e:
+            msg = str(e)
+            # Common user-facing case for filter expressions:
+            # WHERE expects boolean; plain numeric/text expressions are invalid here.
+            if "argument of WHERE must be type boolean" in msg:
+                return (
+                    "Filter expression must evaluate to TRUE/FALSE. "
+                    "Use a comparison, e.g. COALESCE(del_rec, 0) > 0, "
+                    "end_time > CURRENT_DATE, or status = 'ACTIVE'."
+                )
+            return msg
+        finally:
+            try:
+                if cur:
+                    cur.close()
+            except Exception:
+                pass
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+
     def post(self, request):
         """
         Validate a calculated column expression
@@ -2353,8 +2517,28 @@ class ValidateExpressionView(APIView):
                 original_functions = SUPPORTED_FUNCTIONS.copy()
                 SUPPORTED_FUNCTIONS = {k: v for k, v in SUPPORTED_FUNCTIONS.items() if k in allowed_functions}
 
-            # Validate
+            # Validate (Python/static validation)
             result = validator.validate()
+
+            # Optional server-side SQL parser validation (PostgreSQL EXPLAIN)
+            # This catches syntax/type issues that client-side checks miss.
+            sql_validation = request.data.get("sql_validation", True)
+            if result.get("success") and sql_validation:
+                # Infer context:
+                # - calculated column flow sends expected_data_type
+                # - filter flow does not
+                expression_context = "calculated" if expected_data_type else "filter"
+                sql_error = self._validate_expression_sql_syntax(
+                    expression,
+                    normalized_columns,
+                    expression_context=expression_context,
+                )
+                if sql_error:
+                    result["success"] = False
+                    result.setdefault("errors", []).append(f"SQL validation failed: {sql_error}")
+                    result["sql_valid"] = False
+                else:
+                    result["sql_valid"] = True
 
             # Restore original functions if overridden
             if allowed_functions:

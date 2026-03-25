@@ -472,7 +472,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setViewMode: (mode) => set({ viewMode: mode }),
 
-  setCanvas: (id, name) => set({ canvasId: id, canvasName: name, past: [], future: [], isDirty: false }),
+  setCanvas: (id, name) => set((state) => {
+    // If we are re-setting the same canvas (e.g. list refetch), do NOT wipe
+    // undo history or dirty state; just keep the name/id in sync.
+    if (state.canvasId === id) {
+      return { canvasId: id, canvasName: name }
+    }
+    // Switching canvases: reset history + dirty state.
+    return { canvasId: id, canvasName: name, past: [], future: [], isDirty: false }
+  }),
 
   setActiveJob: (jobId) => set({ activeJobId: jobId }),
 

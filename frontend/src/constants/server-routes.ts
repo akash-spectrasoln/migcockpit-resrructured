@@ -71,6 +71,10 @@ export const ServerRoutes = {
     selectedTables: (sourceId: number) => `${API_BASE}/api-customer/sources/${sourceId}/selected-tables/`,
     tableData: (sourceId: number) => `${API_BASE}/api-customer/sources/${sourceId}/table-data/`,
     columns: (sourceId: number) => `${API_BASE}/api-customer/sources/${sourceId}/columns/`,
+    repositoryTables: `${API_BASE}/api-customer/repository/tables/`,
+    repositoryColumns: `${API_BASE}/api-customer/repository/columns/`,
+    repositoryTableData: `${API_BASE}/api-customer/repository/table-data/`,
+    repositoryFilter: `${API_BASE}/api-customer/repository/filter/`,
     liveSchema: (sourceId: number, tableName: string) =>
       `${API_BASE}/api-customer/sources/${sourceId}/table/${encodeURIComponent(tableName)}/schema/`,
     deleteSource: (sourceId: number) =>

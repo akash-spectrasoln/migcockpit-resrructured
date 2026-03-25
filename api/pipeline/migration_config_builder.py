@@ -16,9 +16,11 @@ logger = logging.getLogger(__name__)
 
 def _fetch_source_row(cursor, config_column, source_id):
     """Fetch one row from GENERAL.source by id. Returns (source_config_encrypted, created_on) or None."""
+    # config_column is discovered from information_schema; quote it as an identifier.
+    config_column_sql = f'"{config_column}"'
     cursor.execute(
-        """
-        SELECT {config_column}, created_on
+        f"""
+        SELECT {config_column_sql}, created_on
         FROM "GENERAL".source
         WHERE id = %s
         """,
@@ -50,17 +52,31 @@ def build_migration_config(canvas, customer, base_config=None):
         logger.info("build_migration_config: no nodes on canvas")
         return config
 
-    db_settings = settings.DATABASES["default"]
-    databases_to_try = []
-    if getattr(customer, "cust_db", None):
-        databases_to_try.append(customer.cust_db)
-    default_name = db_settings.get("NAME")
-    if default_name and default_name not in databases_to_try:
-        databases_to_try.append(default_name)
+    detected_source_nodes = [
+        n for n in nodes
+        if (n.get("type") or (n.get("data") or {}).get("type") or "").strip().lower().startswith("source")
+    ]
+    logger.info(
+        "build_migration_config: detected source nodes=%s ids(sample)=%s",
+        len(detected_source_nodes),
+        [n.get("id") for n in detected_source_nodes[:8] if n.get("id")],
+    )
 
-    if not databases_to_try:
-        logger.warning("build_migration_config: no database to use (customer.cust_db and default NAME missing)")
+    # GENERAL.source / GENERAL.destination live on the DEFAULT Django DB
+    # (shared metadata store), not on the customer tenant DB.
+    #
+    # Your logs show source configs were not found because the code tried the
+    # customer DB first. Force DEFAULT first to make source_configs reliable.
+    db_settings = settings.DATABASES["default"]
+    default_name = db_settings.get("NAME")
+    if not default_name:
+        logger.warning("build_migration_config: default DB NAME missing in settings.DATABASES['default']")
         return config
+    databases_to_try = [default_name]
+    logger.info(
+        "build_migration_config: forcing DEFAULT DB only for GENERAL store: %s (not checking customer.cust_db)",
+        default_name,
+    )
 
     conn = None
     cursor = None
@@ -77,6 +93,7 @@ def build_migration_config(canvas, customer, base_config=None):
             )
             conn.autocommit = True
             cursor = conn.cursor()
+            logger.info("build_migration_config: connected to GENERAL store DB=%s", database)
             cursor.execute("""
                 SELECT column_name
                 FROM information_schema.columns
@@ -105,9 +122,16 @@ def build_migration_config(canvas, customer, base_config=None):
         return config
 
     try:
+        sources_seen_with_ids = 0
+        sources_added = 0
+        sources_missing_source_id = 0
+        sources_not_found_in_general = 0
+        sources_decrypt_failed = 0
+
         for node in nodes:
             node_type = (node.get("type") or (node.get("data") or {}).get("type") or "").strip().lower()
-            if node_type != "source":
+            # Support variant node types like 'source-postgresql', 'source-mysql', 'sourcepostgresql', etc.
+            if not node_type or not node_type.startswith("source"):
                 continue
 
             node_id = node.get("id")
@@ -124,17 +148,27 @@ def build_migration_config(canvas, customer, base_config=None):
                 except (TypeError, ValueError):
                     pass
             if not source_id:
+                sources_missing_source_id += 1
+                logger.warning(
+                    "build_migration_config: Source node %s missing sourceId (config_data_keys=%s config_data=%s)",
+                    node_id,
+                    list(config_data.keys())[:10],
+                    {k: ("***" if "pass" in str(k).lower() else v) for k, v in list(config_data.items())[:10]},
+                )
                 logger.warning("Source node %s has no sourceId; skipping source_configs", node_id)
                 continue
+            sources_seen_with_ids += 1
 
             row = _fetch_source_row(cursor, config_column, source_id)
             if not row:
+                sources_not_found_in_general += 1
                 logger.warning("Source connection id=%s not found for node %s", source_id, node_id)
                 continue
 
             source_config_encrypted, created_on = row
             decrypted = decrypt_source_data(source_config_encrypted, customer.cust_id, created_on)
             if not decrypted:
+                sources_decrypt_failed += 1
                 logger.warning("Failed to decrypt source id=%s for node %s", source_id, node_id)
                 continue
 
@@ -150,6 +184,7 @@ def build_migration_config(canvas, customer, base_config=None):
                 connection_config["schema"] = decrypted.get("schema")
 
             config["source_configs"][node_id] = {"connection_config": connection_config}
+            sources_added += 1
             logger.info("Added source_config for node %s (source id=%s)", node_id, source_id)
 
         # Destination nodes: fetch from GENERAL.destination, decrypt, add to destination_configs
@@ -216,8 +251,8 @@ def build_migration_config(canvas, customer, base_config=None):
                 if not dest_config_column:
                     continue
                 cursor.execute(
-                    """
-                    SELECT {dest_config_column}, created_on
+                    f"""
+                    SELECT "{dest_config_column}", created_on
                     FROM "GENERAL".destination
                     WHERE id = %s
                     """,
@@ -260,6 +295,15 @@ def build_migration_config(canvas, customer, base_config=None):
             num_sources,
             num_dests,
         )
+        if num_sources == 0:
+            logger.warning(
+                "build_migration_config: no source_configs were created. detected_source_nodes=%s sources_seen_with_ids=%s missing_source_id=%s not_found_in_general=%s decrypt_failed=%s",
+                len(detected_source_nodes),
+                sources_seen_with_ids,
+                sources_missing_source_id,
+                sources_not_found_in_general,
+                sources_decrypt_failed,
+            )
     finally:
         try:
             cursor.close()

@@ -32,6 +32,15 @@ tests/
 ## Commands
 
 ```bash
+# Tier A (PR required, fast)
+python -m pytest tests/unit/ tests/test_node_regression_backend_matrix.py -v
+cd frontend && npm run test -- --run src/pipeline-engine/__tests__/pipeline.integration.test.ts
+
+# Tier B (merge/nightly, full)
+python -m pytest tests/ -v
+cd frontend && npm run test
+cd frontend && npm run test:e2e
+
 # Run all unit tests (always works, no DB needed)
 python -m pytest tests/unit/ -v
 
@@ -46,6 +55,13 @@ python -m pytest tests/integration/ -v
 # Run everything
 python -m pytest tests/ -v
 ```
+
+## Regression Matrix Artifacts
+
+- Node-by-node scenario matrix: `tests/NODE_TEST_MATRIX.md`
+- Backend matrix suite: `tests/test_node_regression_backend_matrix.py`
+- Frontend integration suite: `frontend/src/pipeline-engine/__tests__/pipeline.integration.test.ts`
+- Critical browser journeys: `frontend/e2e/critical-pipeline-flows.spec.ts`
 
 ## What to run after each change
 

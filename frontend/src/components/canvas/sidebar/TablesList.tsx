@@ -36,6 +36,7 @@ interface Table {
 
 interface TablesListProps {
   sourceId: number
+  section?: 'remote' | 'repository'
   onTableDrag?: (table: Table) => void
   onQuickFilter?: (table: Table, sourceId: number) => void
   onTableClick?: (table: Table, sourceId: number) => void
@@ -47,6 +48,7 @@ interface TablesListProps {
 
 export const TablesList: React.FC<TablesListProps> = ({ 
   sourceId, 
+  section = 'remote',
   onTableDrag, 
   onQuickFilter, 
   onTableClick,
@@ -104,36 +106,51 @@ export const TablesList: React.FC<TablesListProps> = ({
       }
 
       try {
-        const params: any = {
-          source_id: sourceId,
-          limit: 100,
-        }
-        if (cursor) {
-          params.cursor = cursor
-        }
-        if (search) {
-          params.search = search
-        }
-        // Only force refresh when explicitly requested (Fetch Tables button clicked)
-        if (forceRefreshParam) {
-          params.force_refresh = 'true'
-        }
-
-        const response = await api.get(`/api/api-customer/sources/${sourceId}/tables/`, {
-          params,
-        })
-
-        const data = response.data
-        const newTables = data.tables || []
-
-        if (append) {
-          setTables((prev) => [...prev, ...newTables])
+        if (section === 'repository') {
+          const response = await sourceTableApi.selected(sourceId)
+          const allTables = response?.tables || []
+          const term = (search || '').toLowerCase()
+          const filtered = term
+            ? allTables.filter((t: any) =>
+                String(t.table_name || '').toLowerCase().includes(term)
+                || String(t.schema || '').toLowerCase().includes(term)
+              )
+            : allTables
+          setTables(filtered)
+          setNextCursor(null)
+          setHasMore(false)
         } else {
-          setTables(newTables)
-        }
+          const params: any = {
+            source_id: sourceId,
+            limit: 100,
+          }
+          if (cursor) {
+            params.cursor = cursor
+          }
+          if (search) {
+            params.search = search
+          }
+          // Only force refresh when explicitly requested (Fetch Tables button clicked)
+          if (forceRefreshParam) {
+            params.force_refresh = 'true'
+          }
 
-        setNextCursor(data.next_cursor || null)
-        setHasMore(data.has_more || false)
+          const response = await api.get(`/api/api-customer/sources/${sourceId}/tables/`, {
+            params,
+          })
+
+          const data = response.data
+          const newTables = data.tables || []
+
+          if (append) {
+            setTables((prev) => [...prev, ...newTables])
+          } else {
+            setTables(newTables)
+          }
+
+          setNextCursor(data.next_cursor || null)
+          setHasMore(data.has_more || false)
+        }
       } catch (error: any) {
         console.error('Failed to fetch tables:', error)
 
@@ -163,7 +180,7 @@ export const TablesList: React.FC<TablesListProps> = ({
         setSearchLoading(false)
       }
     },
-    [sourceId, loading, searchLoading, toast]
+    [sourceId, loading, searchLoading, toast, section]
   )
 
   // Initial load - use cached tables (no force refresh)

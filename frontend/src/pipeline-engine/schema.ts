@@ -18,12 +18,27 @@ import type {
 export function getColKey(col: any): string {
   if (!col) return ''
   if (typeof col === 'string') return col
-  return col.technical_name || col.name || col.column_name || col.db_name || String(col)
+  // Prefer display/business name for UI/schema; keep technical_name separate
+  return (
+    col.outputName ||
+    col.business_name ||
+    col.name ||
+    col.column_name ||
+    col.db_name ||
+    col.technical_name ||
+    String(col)
+  )
 }
 
 function toColumnSchema(raw: any, fallbackDatatype = 'TEXT'): ColumnSchema {
   const name = getColKey(raw)
-  const column = raw.column || raw.db_name || name
+  const column =
+    raw.column ||
+    raw.db_name ||
+    raw.column_name ||
+    raw.name ||
+    (typeof raw === 'string' ? raw : undefined) ||
+    name
   return {
     name,
     datatype: raw.datatype || raw.data_type || raw.type || fallbackDatatype,
@@ -33,7 +48,7 @@ function toColumnSchema(raw: any, fallbackDatatype = 'TEXT'): ColumnSchema {
     column,
     // Preserve any existing lineage information if present
     base: raw.base,
-    technical_name: raw.technical_name,
+    technical_name: raw.technical_name || (typeof raw === 'string' ? raw : undefined),
   } as ColumnSchema
 }
 
@@ -43,9 +58,9 @@ function toColumnSchema(raw: any, fallbackDatatype = 'TEXT'): ColumnSchema {
 
 export function computeSourceOutput(node: RawNode): ColumnSchema[] {
   const meta = node.data.output_metadata
-  if (meta?.columns?.length) return meta.columns.map(toColumnSchema)
+  if (meta?.columns?.length) return meta.columns.map((c: any) => toColumnSchema(c))
   const cfgCols = node.data.config?.columns
-  if (Array.isArray(cfgCols)) return cfgCols.map(toColumnSchema)
+  if (Array.isArray(cfgCols)) return cfgCols.map((c: any) => toColumnSchema(c))
   return []
 }
 
@@ -86,7 +101,7 @@ export function computeProjectionOutput(
     ? cfg.columnOrder.map((c: any) => getColKey(c))
     : undefined
   if (order?.length) {
-    const orderMap = new Map(order.entries().map(([i, name]) => [name, i] as [string, number]))
+    const orderMap = new Map<string, number>(order.map((name, i) => [name, i]))
     base = [...base].sort(
       (a, b) => (orderMap.get(a.name) ?? 9999) - (orderMap.get(b.name) ?? 9999)
     )
@@ -174,7 +189,7 @@ export function computeAggregateOutput(node: RawNode): ColumnSchema[] {
   if (aggregateColumns.length === 0) {
     // Fall back to existing output_metadata if no config yet
     const meta = node.data.output_metadata
-    return meta?.columns?.map(toColumnSchema) ?? []
+    return meta?.columns?.map((c: any) => toColumnSchema(c)) ?? []
   }
 
   const output: ColumnSchema[] = []
@@ -213,7 +228,7 @@ export function computeAggregateOutput(node: RawNode): ColumnSchema[] {
 export function computeComputeOutput(node: RawNode): ColumnSchema[] {
   // Use last-known output_metadata if available (set after execution)
   const meta = node.data.output_metadata
-  return meta?.columns?.map(toColumnSchema) ?? []
+  return meta?.columns?.map((c: any) => toColumnSchema(c)) ?? []
 }
 
 // ─────────────────────────────────────────────────────────────
