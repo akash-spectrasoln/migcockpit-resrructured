@@ -6,7 +6,7 @@
 const WS_BASE_URL = (import.meta as any).env?.VITE_WS_BASE_URL || 'ws://localhost:8004'
 
 export interface JobUpdateMessage {
-  type: 'status' | 'node_progress' | 'complete' | 'error' | 'cancelled'
+  type: 'status' | 'node_progress' | 'segment_execution' | 'complete' | 'error' | 'cancelled'
   status?: string
   progress?: number
   current_step?: string
@@ -18,11 +18,21 @@ export interface JobUpdateMessage {
   message?: string
   error?: string
   stats?: Record<string, any>
+
+  // Segment execution (linear SQL container) event payload
+  segment_id?: string
+  segment_node_ids?: string[]
+  started_at?: number
+  completed_at?: number
+  duration_seconds?: number
+  rowcount?: number
+  sql?: string
 }
 
 interface WebSocketCallbacks {
   onStatus?: (data: JobUpdateMessage) => void
   onNodeProgress?: (data: JobUpdateMessage) => void
+  onSegmentExecution?: (data: JobUpdateMessage) => void
   onComplete?: (data: JobUpdateMessage) => void
   onError?: (data: JobUpdateMessage) => void
   onCancelled?: (data: JobUpdateMessage) => void
@@ -84,6 +94,9 @@ class WebSocketService {
             break
           case 'node_progress':
             this.callbacks.onNodeProgress?.(data)
+            break
+          case 'segment_execution':
+            this.callbacks.onSegmentExecution?.(data)
             break
           case 'complete':
             this.callbacks.onComplete?.(data)

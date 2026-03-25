@@ -31,9 +31,19 @@ cd /d "%BASE_DIR%\frontend"
 call npm run test
 if errorlevel 1 goto END
 
-echo [3/3] Frontend E2E tests (playwright)
+echo [3/3] Starting frontend dev server for E2E (Vite)
+start "" /b npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+
+REM Wait for Vite to be reachable
+powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; for($i=0; $i -lt 60; $i++){ try{ $resp = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5173/' -TimeoutSec 2; if($resp.StatusCode -ge 200){ exit 0 } } catch {} Start-Sleep -Milliseconds 500 }; exit 1"
+if errorlevel 1 goto END
+
+echo [4/3] Frontend E2E tests (playwright)
 call npm run test:e2e
 if errorlevel 1 goto END
+
+REM Stop dev server (best-effort)
+powershell -NoProfile -Command "$conns = Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue; if($conns){ $pids = ($conns | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique); foreach($pid in $pids){ Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } }"
 
 echo.
 echo ============================================================

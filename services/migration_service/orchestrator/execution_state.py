@@ -36,6 +36,38 @@ class NodePhase(str, Enum):
     FINALIZE = "finalize"
 
 @dataclass
+class SegmentExecutionState:
+    """
+    Runtime state for one compiled SQL "segment" (linear chain container).
+
+    One segment corresponds to a single compiled SQL entry executed by the executor
+    (i.e., `ExecutionPlan.levels[].queries[]` item).
+    """
+
+    segment_id: str
+    segment_node_ids: list[str]
+    sql: str
+    status: str = "running"  # running | success | failed
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    duration_seconds: Optional[float] = None
+    rowcount: Optional[int] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "segment_id": self.segment_id,
+            "segment_node_ids": self.segment_node_ids,
+            "sql": self.sql,
+            "status": self.status,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "duration_seconds": self.duration_seconds,
+            "rowcount": self.rowcount,
+            "error": self.error,
+        }
+
+@dataclass
 class NodeExecutionState:
     """Runtime state for a single node execution."""
     node_id: str
@@ -80,6 +112,9 @@ class PipelineExecutionState:
     total_levels: Optional[int] = None
     level_status: Optional[str] = None
 
+    # Segment execution details (compiled SQL "containers")
+    segments: dict[str, SegmentExecutionState] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for WebSocket emission."""
         return {
@@ -97,6 +132,7 @@ class PipelineExecutionState:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "node_progress": [node.to_dict() for node in self.nodes.values()],
+            "segment_progress": [s.to_dict() for s in self.segments.values()],
         }
 
 class ExecutionStateStore:
@@ -204,6 +240,75 @@ class ExecutionStateStore:
             self._states[job_id] = state
             logger.info(f"Initialized execution state for job {job_id}: {len(node_ids)} nodes")
             return state
+
+    async def start_segment(
+        self,
+        job_id: str,
+        *,
+        segment_id: str,
+        segment_node_ids: list[str],
+        sql: str,
+    ) -> None:
+        """Mark a compiled SQL segment as running."""
+        async with self._lock:
+            state = self._states.get(job_id)
+            if not state:
+                return
+
+            state.segments[segment_id] = SegmentExecutionState(
+                segment_id=segment_id,
+                segment_node_ids=segment_node_ids,
+                sql=sql,
+                status="running",
+                started_at=time.time(),
+            )
+
+    async def complete_segment(
+        self,
+        job_id: str,
+        *,
+        segment_id: str,
+        success: bool,
+        rowcount: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Mark a compiled SQL segment as completed."""
+        async with self._lock:
+            state = self._states.get(job_id)
+            if not state:
+                return
+
+            seg = state.segments.get(segment_id)
+            if not seg:
+                return
+
+            seg.completed_at = time.time()
+            seg.duration_seconds = (
+                (seg.completed_at - seg.started_at)
+                if seg.started_at is not None and seg.completed_at is not None
+                else None
+            )
+            seg.rowcount = rowcount
+            seg.error = error
+            seg.status = "success" if success else "failed"
+
+    async def fail_remaining_segments(self, job_id: str) -> None:
+        """Mark segments that never started/completed as failed."""
+        async with self._lock:
+            state = self._states.get(job_id)
+            if not state:
+                return
+
+            for seg in state.segments.values():
+                if seg.status == "running":
+                    seg.status = "failed"
+                    seg.error = seg.error or "Execution aborted"
+                    seg.completed_at = seg.completed_at or time.time()
+                    seg.duration_seconds = (
+                        (seg.completed_at - seg.started_at)
+                        if seg.started_at is not None and seg.completed_at is not None
+                        else None
+                    )
 
     async def start_pipeline(self, job_id: str, current_step: str = "Starting execution"):
         """Mark pipeline as RUNNING."""

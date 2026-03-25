@@ -29,8 +29,26 @@ Write-Host "[2/3] Frontend unit/integration tests (vitest)..."
 Set-Location (Join-Path $BaseDir "frontend")
 npm run test
 
-Write-Host "[3/3] Frontend E2E tests (playwright)..."
+Write-Host "[3/3] Starting frontend dev server for E2E (Vite)..."
+$null = Start-Process -FilePath "npm" -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "5173", "--strictPort") -WorkingDirectory (Join-Path $BaseDir "frontend") -NoNewWindow -PassThru
+
+Write-Host "Waiting for http://127.0.0.1:5173/ ..."
+for ($i=0; $i -lt 60; $i++) {
+  try {
+    $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:5173/" -TimeoutSec 2
+    if ($resp.StatusCode -ge 200) { break }
+  } catch {
+    Start-Sleep -Milliseconds 500
+  }
+}
+
+Write-Host "[4/3] Frontend E2E tests (playwright)..."
 npm run test:e2e
+
+# Stop dev server (best-effort)
+Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue | ForEach-Object {
+  try { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } catch {}
+}
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green

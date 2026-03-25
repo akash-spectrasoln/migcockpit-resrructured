@@ -140,7 +140,16 @@ class MigrationJobViewSet(viewsets.ModelViewSet):
         """Get migration job status from DB (non-blocking). Triggers background refresh when pending/running."""
         job = self.get_object()
         # Trigger background refresh so next poll gets fresh status; never block on FastAPI here.
-        if job.status in ('pending', 'running'):
+        # Also refresh when stats are missing (e.g. to populate `stats.segments` for the UI).
+        stats = job.stats
+        stats_has_segments = False
+        if isinstance(stats, dict):
+            stats_has_segments = "segments" in stats and bool(stats.get("segments"))
+        elif stats is not None:
+            # Non-dict stats (unexpected) => treat as missing
+            stats_has_segments = False
+
+        if job.status in ('pending', 'running') or not stats_has_segments:
             from api.tasks.migration_tasks import update_migration_status
             update_migration_status.delay(job.id)
         extra = job.status_extra or {}

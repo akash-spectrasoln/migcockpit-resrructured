@@ -10,6 +10,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  test: {
+    // Vitest should only run unit/integration tests.
+    // E2E lives in `e2e/**` using Playwright's `test.describe()`.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    exclude: ['e2e/**', 'node_modules/**'],
+  },
   server: {
     port: 5173,
     host: '0.0.0.0',

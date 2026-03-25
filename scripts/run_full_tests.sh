@@ -30,7 +30,22 @@ cd "$BASE_DIR/frontend"
 npm run test
 
 echo "[3/3] Frontend E2E tests (playwright)"
+# Start Vite dev server for Playwright
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort &
+VITE_PID=$!
+
+echo "Waiting for http://127.0.0.1:5173/ ..."
+for i in $(seq 1 60); do
+  if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5173/', timeout=2).read()" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+
 npm run test:e2e
+
+# Stop Vite dev server
+kill $VITE_PID >/dev/null 2>&1 || true
 
 echo ""
 echo "============================================================"

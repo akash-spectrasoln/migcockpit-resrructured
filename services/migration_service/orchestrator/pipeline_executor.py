@@ -253,6 +253,13 @@ async def execute_pipeline_pushdown(
                     state = await execution_store.get_state(job_id)
                     if state and current_node_id in state.nodes:
                         await ws_emitter.emit_node_started(job_id, state.nodes[current_node_id])
+                    segment_node_ids = getattr(compiled_sql, "segment_node_ids", None) or [current_node_id]
+                    await execution_store.start_segment(
+                        job_id=job_id,
+                        segment_id=current_node_id,
+                        segment_node_ids=list(segment_node_ids),
+                        sql=compiled_sql.sql,
+                    )
 
                 sql_hash = hashlib.md5(compiled_sql.sql.encode()).hexdigest()[:8]
                 node_short = (current_node_id[:8] + "...") if current_node_id else "n/a"
@@ -373,6 +380,18 @@ async def execute_pipeline_pushdown(
                                 else:
                                     raise
                 except Exception as query_err:
+                    # Capture segment failure timing before bubbling the error up.
+                    query_duration = time.time() - query_start
+                    if current_node_id:
+                        await execution_store.complete_segment(
+                            job_id=job_id,
+                            segment_id=current_node_id,
+                            success=False,
+                            error=str(query_err),
+                        )
+                        state = await execution_store.get_state(job_id)
+                        if state and current_node_id in state.segments:
+                            await ws_emitter.emit_segment_completed(job_id, state.segments[current_node_id])
                     _last_phase = (
                         f"PHASE_9_LEVEL_{level_num}_QUERY_{query_idx + 1}_NODE_{current_node_id[:8] if current_node_id else 'n/a'}"
                     )
@@ -399,6 +418,15 @@ async def execute_pipeline_pushdown(
                             state.nodes[current_node_id],
                             state.overall_progress
                         )
+                    await execution_store.complete_segment(
+                        job_id=job_id,
+                        segment_id=current_node_id,
+                        success=True,
+                        rowcount=rowcount,
+                    )
+                    state = await execution_store.get_state(job_id)
+                    if state and current_node_id in state.segments:
+                        await ws_emitter.emit_segment_completed(job_id, state.segments[current_node_id])
                     if state:
                         await ws_emitter.emit_pipeline_progress(job_id, state)
 
@@ -534,6 +562,12 @@ async def execute_pipeline_pushdown(
             "rows_inserted": rowcount,
             "execution_mode": "sql_pushdown"
         }
+        # Preserve insertion order isn't critical; UI will render segments by received order.
+        # Always include `segments` so the UI can show either details or an explicit empty state.
+        if state and getattr(state, "segments", None) is not None:
+            result["segments"] = [s.to_dict() for s in state.segments.values()]
+        else:
+            result["segments"] = []
         logger.info(
             f"[PUSHDOWN] Job {job_id}: SUCCESS in {total_duration:.2f}s, "
             f"{result['rows_inserted']} rows"
@@ -566,6 +600,7 @@ async def execute_pipeline_pushdown(
             pass
 
         await execution_store.fail_remaining_nodes(job_id)
+        await execution_store.fail_remaining_segments(job_id)
         await execution_store.complete_pipeline(job_id, success=False, error=error_msg)
         state = await execution_store.get_state(job_id)
         if state:

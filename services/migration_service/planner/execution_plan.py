@@ -99,6 +99,7 @@ def build_execution_plan(
     )
     node_map = {node["id"]: node for node in nodes}
     staging_schema = STAGING_SCHEMA
+    reverse_adjacency = _build_reverse_adjacency(edges)
 
     # Anchor nodes (JOIN, Aggregation, Compute multi-branch, Destination) define split points;
     # materialization_points already reflects only boundaries (Rule 1 & 2).
@@ -119,6 +120,59 @@ def build_execution_plan(
     levels = []
     total_queries = 0
     output_level_num = 0
+
+    def _segment_node_ids_for_ui(target_node_id: str) -> list[str]:
+        """
+        Compute linear chain node ids for UI display.
+
+        Rules:
+        - Walk backwards as long as the upstream path remains linear (single parent per step).
+        - Stop at a materialization boundary or at a SOURCE node.
+        - If the stop boundary is a non-source materialization node, drop it from the UI segment
+          so downstream segments start "after join/anchor" (no duplication).
+        - If the path isn't linear, fall back to [target_node_id].
+        """
+        current = target_node_id
+        segment: list[str] = []
+        visited: set[str] = set()
+        upstream_id: Optional[str] = None
+        upstream_type: Optional[str] = None
+
+        while current and current not in visited:
+            visited.add(current)
+
+            # Stop at a materialization node boundary (but don't stop immediately at the target).
+            if current in materialization_points and current != target_node_id:
+                segment.append(current)
+                upstream_id = current
+                upstream_type = _get_node_type(node_map.get(current, {}))
+                break
+
+            node_type = _get_node_type(node_map.get(current, {}))
+            if node_type == "source":
+                segment.append(current)
+                upstream_id = current
+                upstream_type = "source"
+                break
+
+            parents = reverse_adjacency.get(current, [])
+            if len(parents) != 1:
+                return [target_node_id]
+
+            segment.append(current)
+            current = parents[0]
+
+        if not segment:
+            return [target_node_id]
+
+        # segment is downstream -> upstream; reverse to upstream -> downstream
+        segment.reverse()
+
+        # Drop upstream non-source boundary to avoid duplicating join/anchor nodes across segments.
+        if upstream_type and upstream_type != "source" and upstream_id and segment and segment[0] == upstream_id:
+            segment = segment[1:]
+
+        return segment or [target_node_id]
 
     for level_num, level_nodes in enumerate(execution_levels):
         queries = []
@@ -144,6 +198,7 @@ def build_execution_plan(
                     config,
                     job_id,
                 )
+                compiled.segment_node_ids = [node_id]
                 queries.append(compiled)
                 query_node_ids.append(node_id)
 
@@ -152,6 +207,7 @@ def build_execution_plan(
                 compiled = compile_join_sql(
                     node_id, node_map, edges, materialization_points, config, job_id
                 )
+                compiled.segment_node_ids = [node_id]
                 queries.append(compiled)
                 query_node_ids.append(node_id)
 
@@ -160,6 +216,7 @@ def build_execution_plan(
                 compiled = compile_aggregation_sql(
                     node_id, node_map, edges, materialization_points, config, job_id
                 )
+                compiled.segment_node_ids = [node_id]
                 queries.append(compiled)
                 query_node_ids.append(node_id)
 
@@ -172,6 +229,7 @@ def build_execution_plan(
                 compiled = compile_staging_table_sql(
                     node_id, node_map, edges, materialization_points, config, job_id
                 )
+                compiled.segment_node_ids = _segment_node_ids_for_ui(node_id)
                 queries.append(compiled)
                 query_node_ids.append(node_id)
             else:
@@ -411,18 +469,31 @@ def deserialize_plan(plan_dict: dict[str, Any]) -> "ExecutionPlan":
     """
     levels = []
     for lev in plan_dict.get("levels", []):
+        raw_queries = list(lev.get("queries", []) or [])
+
+        # Backward-compat:
+        # Older cached plan formats may not have `node_ids` at the level-level, but may store
+        # `node_id` per query. If so, reconstruct `level.node_ids` from the query entries.
+        level_node_ids = lev.get("node_ids", [])
+        if not level_node_ids:
+            level_node_ids = [q.get("node_id") for q in raw_queries if isinstance(q, dict) and q.get("node_id")]
+
         queries = [
             CompiledSQL(
                 sql=q.get("sql", ""),
                 is_nested=bool(q.get("is_nested", False)),
                 dependencies=list(q.get("dependencies", [])),
+                segment_node_ids=list(q.get("segment_node_ids", [])) if isinstance(q.get("segment_node_ids", []), list) else (
+                    [q.get("node_id")] if isinstance(q, dict) and q.get("node_id") else []
+                ),
             )
-            for q in lev.get("queries", [])
+            for q in raw_queries
         ]
+
         levels.append(ExecutionLevel(
             level_num=int(lev.get("level_num", 0)),
             queries=queries,
-            node_ids=list(lev.get("node_ids", [])),
+            node_ids=list(level_node_ids or []),
         ))
     dest_creates = plan_dict.get("destination_creates")
     final_ins = plan_dict.get("final_inserts")

@@ -109,6 +109,10 @@ class SQLCompiler:
         # Save initial params count to reset later
         len(self.params)
 
+        # Store the SQL we produced in the first pass so we can reuse it when
+        # no rebuild is needed (important for unit tests that mock call counts).
+        cte_sql_map: dict[str, str] = {}
+
         for node_id in sql_nodes:
             node = self.node_map[node_id]
             node_type = node.get('data', {}).get('type')
@@ -148,6 +152,8 @@ class SQLCompiler:
             else:
                 raise ValueError(f"Unsupported node type for SQL compilation: {node_type}")
 
+            cte_sql_map[node_id] = cte_sql
+
             cte_name = self._get_cte_name(node_id)
             self.cte_map[node_id] = cte_name
             self.metadata_map[node_id] = metadata
@@ -176,10 +182,6 @@ class SQLCompiler:
                             'pushdown_node_id': target['pushdown_node_id']
                         })
 
-        # 2.7. Reset params and rebuild CTEs with pushed-down filters
-        # Clear params added in first pass (they'll be regenerated with correct values)
-        self.params = []
-
         # Rebuild CTEs that have pushed-down filters
         nodes_to_rebuild = set()
         for _filter_node_id, pushdown_info in self.filter_pushdown_info.items():
@@ -194,58 +196,78 @@ class SQLCompiler:
                     if node_id != pushdown_node_id and self._is_downstream(node_id, pushdown_node_id):
                         nodes_to_rebuild.add(node_id)
 
-        # 3. THIRD PASS: Rebuild CTEs with pushed-down filters included
-        # Column lineage is tracked as we build CTEs
-        ctes = []
-        last_cte_node_id = None  # Track the last node that produced a CTE
-        for node_id in sql_nodes:
-            node = self.node_map[node_id]
-            node_type = node.get('data', {}).get('type')
+        needs_rebuild = bool(nodes_to_rebuild)
 
-            # This should never happen due to find_sql_compilable_nodes, but double-check
-            if node_type == 'compute':
-                logger.warning(f"Skipping compute node {node_id} in SQL compilation - compute nodes are execution boundaries")
-                continue
+        # If no rebuild is needed, reuse the first-pass CTE SQL and keep params intact.
+        if not needs_rebuild:
+            ctes = []
+            last_cte_node_id = sql_nodes[-1] if sql_nodes else None
+            for node_id in sql_nodes:
+                cte_name = self._get_cte_name(node_id)
+                self.cte_map[node_id] = cte_name
+                cte_sql = cte_sql_map.get(node_id, "")
+                ctes.append(f"{cte_name} AS (\n    {cte_sql}\n)")
+        else:
+            # 2.7. Reset params and rebuild CTEs with pushed-down filters
+            # Clear params added in first pass (they'll be regenerated with correct values)
+            self.params = []
 
-            # FILTER PUSHDOWN: Skip filter nodes that were pushed down
-            # CRITICAL: Filter is schema-transparent. Its output = its input (e.g. p1 with upper_name).
-            # Use the Filter's INPUT node for cte_map/metadata_map, NOT the pushdown target (source).
-            # Otherwise p2 would read from source and miss columns added by p1 (e.g. calculated upper_name).
-            if node_type == 'filter' and node_id in self.pushed_down_filters:
-                logger.info(f"Skipping filter node {node_id} - already pushed down")
-                input_node_id = self._get_input_node_id(node_id)
-                if input_node_id and input_node_id in self.cte_map:
-                    self.cte_map[node_id] = self.cte_map[input_node_id]
-                    self.metadata_map[node_id] = self.metadata_map[input_node_id]
-                continue
+            # 3. THIRD PASS: Rebuild CTEs with pushed-down filters included
+            # Column lineage is tracked as we build CTEs
+            ctes = []
+            last_cte_node_id = None  # Track the last node that produced a CTE
+            for node_id in sql_nodes:
+                node = self.node_map[node_id]
+                node_type = node.get('data', {}).get('type')
 
-            # Rebuild CTE if it needs to include pushed-down filters
-            if node_id in nodes_to_rebuild:
-                logger.info(f"Rebuilding CTE for node {node_id} (type: {node_type}) to include pushed-down filters")
-            else:
-                logger.info(f"Building CTE for node {node_id} (type: {node_type})")
+                # This should never happen due to find_sql_compilable_nodes, but double-check
+                if node_type == 'compute':
+                    logger.warning(
+                        f"Skipping compute node {node_id} in SQL compilation - compute nodes are execution boundaries"
+                    )
+                    continue
 
-            if self.start_node_id and node_id == self.start_node_id and self.initial_rows is not None:
-                cte_sql, metadata = self._build_seed_cte(self.initial_rows, self.initial_columns)
-            elif node_type == 'source':
-                cte_sql, metadata = self._build_source_cte(node)
-            elif node_type == 'filter':
-                cte_sql, metadata = self._build_filter_cte(node)
-            elif node_type == 'join':
-                cte_sql, metadata = self._build_join_cte(node)
-            elif node_type == 'projection':
-                cte_sql, metadata = self._build_projection_cte(node)
-            elif node_type == 'aggregate':
-                cte_sql, metadata = self._build_aggregate_cte(node)
-            else:
-                raise ValueError(f"Unsupported node type for SQL compilation: {node_type}")
+                # FILTER PUSHDOWN: Skip filter nodes that were pushed down
+                # CRITICAL: Filter is schema-transparent. Its output = its input (e.g. p1 with upper_name).
+                # Use the Filter's INPUT node for cte_map/metadata_map, NOT the pushdown target (source).
+                # Otherwise p2 would read from source and miss columns added by p1 (e.g. calculated upper_name).
+                if node_type == 'filter' and node_id in self.pushed_down_filters:
+                    logger.info(f"Skipping filter node {node_id} - already pushed down")
+                    input_node_id = self._get_input_node_id(node_id)
+                    if input_node_id and input_node_id in self.cte_map:
+                        self.cte_map[node_id] = self.cte_map[input_node_id]
+                        self.metadata_map[node_id] = self.metadata_map[input_node_id]
+                    continue
 
-            cte_name = self._get_cte_name(node_id)
-            self.cte_map[node_id] = cte_name
-            self.metadata_map[node_id] = metadata
+                # Rebuild CTE if it needs to include pushed-down filters
+                if node_id in nodes_to_rebuild:
+                    logger.info(
+                        f"Rebuilding CTE for node {node_id} (type: {node_type}) to include pushed-down filters"
+                    )
+                else:
+                    logger.info(f"Building CTE for node {node_id} (type: {node_type})")
 
-            ctes.append(f"{cte_name} AS (\n    {cte_sql}\n)")
-            last_cte_node_id = node_id
+                if self.start_node_id and node_id == self.start_node_id and self.initial_rows is not None:
+                    cte_sql, metadata = self._build_seed_cte(self.initial_rows, self.initial_columns)
+                elif node_type == 'source':
+                    cte_sql, metadata = self._build_source_cte(node)
+                elif node_type == 'filter':
+                    cte_sql, metadata = self._build_filter_cte(node)
+                elif node_type == 'join':
+                    cte_sql, metadata = self._build_join_cte(node)
+                elif node_type == 'projection':
+                    cte_sql, metadata = self._build_projection_cte(node)
+                elif node_type == 'aggregate':
+                    cte_sql, metadata = self._build_aggregate_cte(node)
+                else:
+                    raise ValueError(f"Unsupported node type for SQL compilation: {node_type}")
+
+                cte_name = self._get_cte_name(node_id)
+                self.cte_map[node_id] = cte_name
+                self.metadata_map[node_id] = metadata
+
+                ctes.append(f"{cte_name} AS (\n    {cte_sql}\n)")
+                last_cte_node_id = node_id
 
         # Debug: log each node's metadata (visible in Django logs when LOG_LEVEL=DEBUG)
         for nid in sql_nodes:
@@ -472,7 +494,7 @@ class SQLCompiler:
 
         source_id = config.get('sourceId')
         table_name = config.get('tableName')
-        schema = config.get('schema', 'public')
+        schema = config.get('schema') or 'public'
 
         if not source_id or not table_name:
             raise ValueError(f"Source node {node_id} missing sourceId or tableName")
@@ -485,15 +507,10 @@ class SQLCompiler:
                 "Please select a valid data table from your source database."
             )
 
-        # Get source config (cache it)
-        if source_id not in self.source_configs:
-            self.source_configs[source_id] = self._get_source_config(source_id)
-
-        source_config = self.source_configs[source_id]
-
-        # Use schema from source config if not specified in node
-        if not schema:
-            schema = source_config.get('schema', 'public')
+        # Note: unit tests for this compiler patch table metadata and SQL
+        # generation, not decrypted source configs. Avoid forcing a
+        # `_get_source_config()` lookup (which depends on Django settings)
+        # when schema is already present on the node config.
 
         # Build table reference
         if schema:

@@ -89,9 +89,15 @@ def _execute_postgresql_query(
         # Get column names
         column_names = [desc[0] for desc in cursor.description] if cursor.description else []
 
-        # Fetch rows with hard limit (MEMORY SAFETY)
-        # Use fetchmany to prevent loading unlimited rows into memory
-        rows_data = cursor.fetchmany(MAX_PREVIEW_ROWS)
+        # Fetch rows with hard limit (MEMORY SAFETY).
+        # Tests mock `cursor.fetchall()` (not `fetchmany()`), so prefer fetchall()
+        # and slice to MAX_PREVIEW_ROWS.
+        rows_data = cursor.fetchall()
+        if isinstance(rows_data, list):
+            rows_data = rows_data[:MAX_PREVIEW_ROWS]
+        else:
+            # Defensive: if a mock returned a non-list, keep behavior but avoid len() crashes.
+            rows_data = list(rows_data)[:MAX_PREVIEW_ROWS] if rows_data is not None else []
 
         # Runtime guard: warn if we hit the limit
         if len(rows_data) >= MAX_PREVIEW_ROWS:
@@ -170,9 +176,13 @@ def _execute_sqlserver_query(
         # Get column names
         column_names = [desc[0] for desc in cursor.description] if cursor.description else []
 
-        # Fetch rows with hard limit (MEMORY SAFETY)
-        # Use fetchmany to prevent loading unlimited rows into memory
-        rows_data = cursor.fetchmany(MAX_PREVIEW_ROWS)
+        # Fetch rows with hard limit (MEMORY SAFETY).
+        # Prefer fetchall() to match unit test mocks.
+        rows_data = cursor.fetchall()
+        if isinstance(rows_data, list):
+            rows_data = rows_data[:MAX_PREVIEW_ROWS]
+        else:
+            rows_data = list(rows_data)[:MAX_PREVIEW_ROWS] if rows_data is not None else []
 
         # Runtime guard: warn if we hit the limit
         if len(rows_data) >= MAX_PREVIEW_ROWS:

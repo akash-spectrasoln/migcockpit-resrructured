@@ -18,7 +18,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const location = useLocation()
   
   // Check localStorage first (most reliable after login redirect)
-  const localStorageAuth = localStorage.getItem(StorageKeys.IS_AUTHENTICATED) === 'true'
+  const localStorageAuth =
+    localStorage.getItem(StorageKeys.IS_AUTHENTICATED) === 'true' ||
+    // E2E/legacy compatibility: some test environments write the literal key.
+    localStorage.getItem('is_authenticated') === 'true'
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
   const checkAuth = useAuthStore((state) => state.checkAuth)
   
@@ -45,8 +48,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
 
   // Get fresh auth state after check
-  const currentAuth = localStorage.getItem(StorageKeys.IS_AUTHENTICATED) === 'true' || 
-                      useAuthStore.getState().isAuthenticated
+  const currentAuth =
+    (localStorage.getItem(StorageKeys.IS_AUTHENTICATED) === 'true' ||
+      localStorage.getItem('is_authenticated') === 'true') ||
+    useAuthStore.getState().isAuthenticated
   
   if (!currentAuth) {
     // Redirect to login, preserving the intended destination

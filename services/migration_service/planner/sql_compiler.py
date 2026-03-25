@@ -10,7 +10,7 @@ RULES:
 - Pure SELECT only
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import re
 from typing import Any, Optional
@@ -38,6 +38,9 @@ class CompiledSQL:
     sql: str
     is_nested: bool  # True if nested SELECT, False if CREATE TABLE
     dependencies: list[str]  # Node IDs this SQL depends on
+    # UI/observability: linear segment (nodes) that this compiled SQL represents.
+    # Filled by the execution plan builder; safe default for older cached plans.
+    segment_node_ids: list[str] = field(default_factory=list)
 
 def _predicate_signature(pred: str) -> str:
     """
@@ -1746,6 +1749,42 @@ def flatten_segment_from_source(
             if col in tech_to_db or col in db_to_tech:
                 tech_name = db_to_tech.get(col, col)
                 required_tech.add(tech_name)
+
+    # Add join-condition columns for downstream JOIN nodes.
+    # This is required when source column metadata is missing (e.g. projections with empty config),
+    # but JOIN conditions still reference specific upstream columns.
+    # We infer which side this branch feeds by comparing `final_id` against the join's direct parents
+    # as ordered by the `edges` list.
+    downstream_edges = [e for e in edges if isinstance(e, dict) and e.get("source") == final_id]
+    for e in downstream_edges:
+        target_id = e.get("target")
+        if not target_id:
+            continue
+        if _get_node_type(nodes.get(target_id, {})) != "join":
+            continue
+        join_node = nodes.get(target_id, {})
+        join_cfg = join_node.get("data", {}).get("config", {}) or {}
+        conditions = join_cfg.get("conditions", []) or []
+
+        join_parents = [pe.get("source") for pe in edges if isinstance(pe, dict) and pe.get("target") == target_id]
+        join_parents = [p for p in join_parents if p]  # keep only truthy
+
+        side = "both"
+        if len(join_parents) >= 2:
+            if final_id == join_parents[0]:
+                side = "left"
+            elif final_id == join_parents[1]:
+                side = "right"
+
+        for cond in conditions:
+            if not isinstance(cond, dict):
+                continue
+            left_col = cond.get("leftColumn")
+            right_col = cond.get("rightColumn")
+            if side in ("left", "both") and left_col:
+                required_tech.add(left_col)
+            if side in ("right", "both") and right_col:
+                required_tech.add(right_col)
 
     def _find_calc_expr(t: str):
         """Resolve calculated column expression: exact match, or by technical_name suffix (e.g. 0377bcbd_upper_trial -> upper_trial)."""

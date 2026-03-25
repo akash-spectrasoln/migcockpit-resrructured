@@ -45,7 +45,7 @@ import { useAuthStore } from '../store/authStore'
 import { useCanvasStore } from '../store/canvasStore'
 import { wsService, JobUpdateMessage } from '../services/websocket'
 import { ClientRoutes } from '../constants/client-routes'
-import { LogOut, Filter, RefreshCw, Square, Eye, X, ArrowLeft, List } from 'lucide-react'
+import { LogOut, Filter, RefreshCw, Square, Eye, X, ArrowLeft, List, Maximize2, Minimize2 } from 'lucide-react'
 
 interface MigrationJob {
   id: number
@@ -80,6 +80,8 @@ export const JobsPage: React.FC = () => {
   const [selectedJob, setSelectedJob] = useState<MigrationJob | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [sidebarExpanded, setSidebarExpanded] = useState(false)
+  const [expandedSegmentSqlId, setExpandedSegmentSqlId] = useState<string | null>(null)
   const [filters, setFilters] = useState({
     status: '',
     search: '',
@@ -149,6 +151,47 @@ export const JobsPage: React.FC = () => {
               updateJobProgress(data.node_id, data.progress)
             }
           }
+        },
+        onSegmentExecution: (data: JobUpdateMessage) => {
+          if (!data.segment_id) return
+
+          const segmentPayload = {
+            segment_id: data.segment_id,
+            segment_node_ids: data.segment_node_ids || [],
+            status: data.status,
+            started_at: data.started_at,
+            completed_at: data.completed_at,
+            duration_seconds: data.duration_seconds,
+            rowcount: data.rowcount,
+            sql: data.sql,
+            error: data.error,
+          }
+
+          setJobs((prevJobs) =>
+            prevJobs.map((j) => {
+              if (j.job_id !== job.job_id) return j
+              const existingStats: any = j.stats || {}
+              const existingSegments: any[] = Array.isArray(existingStats.segments)
+                ? existingStats.segments
+                : (existingStats.segments && typeof existingStats.segments === 'object'
+                    ? Object.values(existingStats.segments as Record<string, any>)
+                    : [])
+
+              const idx = existingSegments.findIndex((s: any) => s?.segment_id === data.segment_id)
+              const nextSegments =
+                idx >= 0
+                  ? existingSegments.map((s: any, i: number) => (i === idx ? segmentPayload : s))
+                  : [...existingSegments, segmentPayload]
+
+              return {
+                ...j,
+                stats: {
+                  ...existingStats,
+                  segments: nextSegments,
+                },
+              }
+            })
+          )
         },
         onComplete: (data: JobUpdateMessage) => {
           setJobs((prevJobs) =>
@@ -226,8 +269,9 @@ export const JobsPage: React.FC = () => {
     if (!silent) setLoading(true)
     else setRefreshing(true)
     try {
-      const response = await migrationApi.getAll()
-      setJobs(response.data)
+      // migrationApi.list() already unwraps Axios and returns the array
+      const jobsData = await migrationApi.list()
+      setJobs(jobsData as any)
     } catch (error) {
       console.error('Error loading jobs:', error)
       toast({ title: 'Failed to load jobs', status: 'error', isClosable: true })
@@ -240,8 +284,9 @@ export const JobsPage: React.FC = () => {
   const loadJobLogs = async (jobId: number) => {
     setLoadingLogs(true)
     try {
-      const response = await migrationApi.getLogs(jobId)
-      setJobLogs(response.data)
+      // migrationApi.logs() already unwraps Axios and returns the logs payload
+      const logsData = await migrationApi.logs(jobId)
+      setJobLogs(logsData as any[])
     } catch (error) {
       console.error('Error loading logs:', error)
     } finally {
@@ -253,6 +298,18 @@ export const JobsPage: React.FC = () => {
     setSelectedJob(job)
     if (job.status === 'running' || job.status === 'pending') {
       loadJobLogs(job.id)
+    }
+
+    // The jobs list endpoint may return `stats` as null/partial.
+    // Fetch full job details so `stats.segments` is available for rendering.
+    try {
+      const fullJob = (await migrationApi.get(job.id)) as any
+      if (fullJob) {
+        setJobs((prev) => prev.map((j) => (j.id === job.id ? fullJob : j)))
+        setSelectedJob(fullJob)
+      }
+    } catch (err) {
+      console.warn('Failed to fetch full job details:', err)
     }
   }
 
@@ -289,6 +346,40 @@ export const JobsPage: React.FC = () => {
     if (filters.dateTo && new Date(job.created_on) > new Date(filters.dateTo)) return false
     return true
   })
+
+  const selectedSegments: any[] = (() => {
+    const raw = (selectedJob?.stats as any)?.segments
+    if (Array.isArray(raw)) return raw
+    if (raw && typeof raw === 'object') return Object.values(raw as Record<string, any>)
+    return []
+  })()
+  const selectedStatsSansSegments: Record<string, any> | null =
+    selectedJob?.stats && typeof selectedJob.stats === 'object'
+      ? Object.fromEntries(Object.entries(selectedJob.stats as any).filter(([k]) => k !== 'segments'))
+      : null
+
+  // Keep the sidebar in sync with the latest `jobs` list as WS updates arrive.
+  useEffect(() => {
+    if (!selectedJob) return
+    const latest = jobs.find((j) => j.job_id === selectedJob.job_id)
+    if (!latest) return
+
+    // Don't overwrite a “full job” fetch (which includes `stats.segments`)
+    // with the lighter list payload from `jobs`.
+    const selectedSegmentsRaw = (selectedJob.stats as any)?.segments
+    const latestSegmentsRaw = (latest.stats as any)?.segments
+
+    const selectedHasNonEmptySegments = Array.isArray(selectedSegmentsRaw) && selectedSegmentsRaw.length > 0
+    const latestHasNonEmptySegments = Array.isArray(latestSegmentsRaw) && latestSegmentsRaw.length > 0
+
+    // If the sidebar already has meaningful stats/segments, keep it.
+    const selectedHasStats =
+      selectedJob.stats && typeof selectedJob.stats === 'object' && Object.keys(selectedJob.stats).length > 0
+
+    if (selectedHasNonEmptySegments || (selectedHasStats && !latestHasNonEmptySegments)) return
+
+    setSelectedJob(latest)
+  }, [jobs, selectedJob?.job_id])
 
   const handleLogout = () => {
     logout()
@@ -548,7 +639,7 @@ export const JobsPage: React.FC = () => {
         {/* Job details sidebar */}
         {selectedJob && (
           <Box
-            w={{ base: '100%', md: '400px' }}
+            w={{ base: '100%', md: sidebarExpanded ? '720px' : '400px' }}
             minW={{ md: '360px' }}
             borderLeftWidth="1px"
             borderColor={borderColor}
@@ -560,13 +651,22 @@ export const JobsPage: React.FC = () => {
           >
             <Flex px={4} py={3} borderBottomWidth="1px" borderColor={borderColor} justify="space-between" align="center">
               <Heading size="sm" color={textColor}>Job details</Heading>
-              <IconButton
-                aria-label="Close"
-                icon={<X size={18} />}
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelectedJob(null)}
-              />
+              <HStack spacing={2}>
+                <IconButton
+                  aria-label={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+                  icon={sidebarExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSidebarExpanded((v) => !v)}
+                />
+                <IconButton
+                  aria-label="Close"
+                  icon={<X size={18} />}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelectedJob(null)}
+                />
+              </HStack>
             </Flex>
             <Box flex={1} overflowY="auto" p={4}>
               <VStack align="stretch" spacing={4}>
@@ -611,7 +711,106 @@ export const JobsPage: React.FC = () => {
                     <Text fontSize="sm" color="red.600" noOfLines={4}>{selectedJob.error_message}</Text>
                   </Box>
                 )}
-                {selectedJob.stats && Object.keys(selectedJob.stats).length > 0 && (
+                {selectedJob.stats && typeof selectedJob.stats === 'object' && (
+                  <Box>
+                    <Text fontSize="xs" fontWeight="semibold" color={subtextColor} mb={2}>
+                      Linear segment execution ({selectedSegments.length} found)
+                    </Text>
+                    {selectedSegments.length === 0 ? (
+                      <Text fontSize="xs" color={subtextColor}>
+                        No linear segment execution details captured for this job yet.
+                      </Text>
+                    ) : (
+                      <VStack align="stretch" spacing={3}>
+                        {selectedSegments.map((seg: any) => (
+                          <Box
+                            key={seg.segment_id}
+                            borderWidth="1px"
+                            borderColor={borderColor}
+                            borderRadius="md"
+                            p={3}
+                            bg={useColorModeValue('gray.50', 'gray.800')}
+                          >
+                          <Flex justify="space-between" align="flex-start" gap={3}>
+                            <Box>
+                              <Text fontSize="xs" fontWeight="semibold" color={textColor} mb={1}>
+                                Segment {seg.segment_id ? `${seg.segment_id.substring(0, 8)}…` : '—'}
+                              </Text>
+                              <Text fontSize="xs" color={subtextColor} mb={1}>
+                                Nodes:{' '}
+                                {Array.isArray(seg.segment_node_ids) && seg.segment_node_ids.length > 0
+                                  ? seg.segment_node_ids
+                                      .slice(0, 20)
+                                      .map((id: string) => `${id.substring(0, 8)}…`)
+                                      .join(' -> ')
+                                  : '—'}
+                              </Text>
+                              <Badge
+                                colorScheme={
+                                  seg.status === 'success' ? 'green' : seg.status === 'failed' ? 'red' : 'gray'
+                                }
+                                variant="subtle"
+                                textTransform="capitalize"
+                              >
+                                {seg.status || 'running'}
+                              </Badge>
+                            </Box>
+
+                            <Box textAlign="right">
+                              <Text fontSize="xs" color={subtextColor}>
+                                Duration: {seg.duration_seconds != null ? `${Number(seg.duration_seconds).toFixed(3)}s` : '—'}
+                              </Text>
+                              <Text fontSize="xs" color={subtextColor}>
+                                Rowcount: {seg.rowcount != null ? seg.rowcount : '—'}
+                              </Text>
+                              <Text fontSize="xs" color={subtextColor}>
+                                Start: {seg.started_at ? new Date(seg.started_at * 1000).toLocaleString() : '—'}
+                              </Text>
+                              <Text fontSize="xs" color={subtextColor}>
+                                End: {seg.completed_at ? new Date(seg.completed_at * 1000).toLocaleString() : '—'}
+                              </Text>
+                            </Box>
+                          </Flex>
+
+                          <Box mt={3}>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorScheme="blue"
+                              onClick={() =>
+                                setExpandedSegmentSqlId((cur) =>
+                                  cur === seg.segment_id ? null : seg.segment_id
+                                )
+                              }
+                            >
+                              {expandedSegmentSqlId === seg.segment_id ? 'Hide SQL' : 'Show SQL'}
+                            </Button>
+                            {expandedSegmentSqlId === seg.segment_id && (
+                              <Box
+                                as="pre"
+                                mt={2}
+                                fontSize="xs"
+                                p={3}
+                                bg={useColorModeValue('gray.900', 'gray.700')}
+                                borderRadius="md"
+                                overflowY="auto"
+                                color={useColorModeValue('white', 'white')}
+                                maxH="520px"
+                                whiteSpace="pre"
+                                wordBreak="break-word"
+                              >
+                                {seg.sql || '—'}
+                              </Box>
+                            )}
+                          </Box>
+                          </Box>
+                        ))}
+                      </VStack>
+                    )}
+                  </Box>
+                )}
+
+                {selectedStatsSansSegments && Object.keys(selectedStatsSansSegments).length > 0 && (
                   <Box>
                     <Text fontSize="xs" fontWeight="semibold" color={subtextColor} mb={1}>Statistics</Text>
                     <Box
@@ -623,7 +822,7 @@ export const JobsPage: React.FC = () => {
                       overflow="auto"
                       color={textColor}
                     >
-                      {JSON.stringify(selectedJob.stats, null, 2)}
+                      {JSON.stringify(selectedStatsSansSegments, null, 2)}
                     </Box>
                   </Box>
                 )}

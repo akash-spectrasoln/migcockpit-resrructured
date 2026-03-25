@@ -19,6 +19,7 @@ import { useAuthStore } from '../store/authStore'
 import { useCanvasStore } from '../store/canvasStore'
 import { useCanvases } from '../hooks/useCanvas'
 import { Node, Edge } from 'reactflow'
+import { StorageKeys } from '../constants/common'
 
 export const CanvasPage: React.FC = () => {
   const navigate = useNavigate()
@@ -42,13 +43,16 @@ export const CanvasPage: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
+      const localStorageAuth = localStorage.getItem(StorageKeys.IS_AUTHENTICATED) === 'true'
       // Only check auth if not already authenticated
       // This prevents redirect loops after successful login
-      if (!isAuthenticated) {
+      if (!isAuthenticated && !localStorageAuth) {
         await checkAuth()
         // After checkAuth, wait a moment and check again
         setTimeout(() => {
-          const currentAuth = useAuthStore.getState().isAuthenticated
+          const currentAuth =
+            localStorage.getItem(StorageKeys.IS_AUTHENTICATED) === 'true' ||
+            useAuthStore.getState().isAuthenticated
           if (!currentAuth) {
             navigate('/login', { replace: true })
           }

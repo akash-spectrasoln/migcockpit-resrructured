@@ -10,6 +10,7 @@ import httpx
 from orchestrator.execution_state import (
     NodeExecutionState,
     PipelineExecutionState,
+    SegmentExecutionState,
 )
 
 logger = logging.getLogger(__name__)
@@ -252,6 +253,30 @@ class WebSocketEmitter:
             }
         )
         logger.info(f"[WS] Pipeline {job_id} failed: {state.error}")
+
+    async def emit_segment_completed(
+        self,
+        job_id: str,
+        segment: SegmentExecutionState,
+    ):
+        """Emit a segment completion event over WebSocket."""
+        await self._emit(
+            job_id,
+            "segment_execution",
+            {
+                "segment_id": segment.segment_id,
+                "segment_node_ids": segment.segment_node_ids,
+                "status": segment.status,
+                "started_at": segment.started_at,
+                "completed_at": segment.completed_at,
+                "duration_seconds": segment.duration_seconds,
+                "rowcount": segment.rowcount,
+                "sql": segment.sql,
+                "error": segment.error,
+            },
+        )
+
+        logger.info(f"[WS] Segment {segment.segment_id} completed: {segment.status}")
 
 # Global singleton instance
 _ws_emitter: Optional[WebSocketEmitter] = None

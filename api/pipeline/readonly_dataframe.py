@@ -47,7 +47,7 @@ class ReadOnlyDataFrame:
         readonly_df['new_col'] = values  # Raises error
     """
 
-    def __init__(self, df: pd.DataFrame, name: str = "input_d"):
+    def __init__(self, df: pd.DataFrame, name: str = "input_df"):
         """
         Initialize read-only wrapper.
 
@@ -70,6 +70,10 @@ class ReadOnlyDataFrame:
             'shape': self._df.shape
         }
 
+    def __len__(self) -> int:
+        """Enable `len(readonly_df)` for tests/compat."""
+        return len(self._df)
+
     def __getattr__(self, name: str) -> Any:
         """
         Delegate attribute access to underlying DataFrame.
@@ -81,6 +85,11 @@ class ReadOnlyDataFrame:
         if name in self._MUTATION_METHODS:
             def blocked_method(*args, **kwargs):
                 self._record_mutation_attempt(name, args, kwargs)
+                if kwargs.get("inplace", False):
+                    raise ReadOnlyDataFrameError(
+                        f"Cannot call {name}() with inplace=True on read-only DataFrame '{self._name}'. "
+                        f"Create a new DataFrame instead: output_df = {self._name}.copy()"
+                    )
                 raise ReadOnlyDataFrameError(
                     f"Cannot call {name}() on read-only DataFrame '{self._name}'. "
                     f"Create a new DataFrame instead: output_df = {self._name}.copy()"
@@ -235,7 +244,7 @@ class ComputeNodeContract:
     def __init__(
         self,
         input_df: pd.DataFrame,
-        input_name: str = "input_d",
+        input_name: str = "input_df",
         validate_output: bool = True,
         preserve_schema: bool = False
     ):
@@ -262,7 +271,7 @@ class ComputeNodeContract:
             self._input_name: self._readonly_input,
             'pd': pd,
             'np': np,
-            'output_d': None,
+            'output_df': None,
             # Helper function for safe DataFrame creation
             'create_output': lambda: self._readonly_input.copy()
         }
